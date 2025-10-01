@@ -25,7 +25,7 @@ This tool is optimized for low-volume retrieval of documentation and reference m
 uv tool install scrapling-fetch-mcp
 
 # Install browser binaries (REQUIRED - large downloads)
-scrapling install
+uvx --from scrapling-fetch-mcp scrapling install
 ```
 
 **Important**: The browser installation downloads hundreds of MB of data and must complete before first use. If the MCP server times out on first use, the browsers may still be installing in the background. Wait a few minutes and try again.
