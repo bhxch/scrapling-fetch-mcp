@@ -9,7 +9,7 @@ An MCP server that helps AI assistants access text content from websites that im
 
 This tool is optimized for low-volume retrieval of documentation and reference materials (text/HTML only) from websites that implement bot detection. It has not been designed or tested for general-purpose site scraping or data harvesting.
 
-> **Note**: This project was developed in collaboration with Claude Sonnet 3.7, using [LLM Context](https://github.com/cyberchitta/llm-context.py).
+> **Note**: This project was developed in collaboration with Claude Sonnets 3.7 and 4.5, using [LLM Context](https://github.com/cyberchitta/llm-context.py).
 
 ## Installation
 
