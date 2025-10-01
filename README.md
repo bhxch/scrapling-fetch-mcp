@@ -1,4 +1,4 @@
-# Scrapling Fetch MCP
+# scrapling-fetch-mcp
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PyPI version](https://img.shields.io/pypi/v/scrapling-fetch-mcp.svg)](https://pypi.org/project/scrapling-fetch-mcp/)
@@ -13,25 +13,34 @@ This tool is optimized for low-volume retrieval of documentation and reference m
 
 ## Installation
 
-1. Requirements:
-   - Python 3.10+
-   - [uv](https://github.com/astral-sh/uv) package manager
+### Requirements
 
-2. Install dependencies and the tool:
+- Python 3.10+
+- [uv](https://github.com/astral-sh/uv) package manager
+
+### Install
+
 ```bash
-uv tool install scrapling
-scrapling install
+# Install scrapling-fetch-mcp
 uv tool install scrapling-fetch-mcp
+
+# Install browser binaries (REQUIRED - large downloads)
+scrapling install
 ```
 
-## Setup with Claude
+**Important**: The browser installation downloads hundreds of MB of data and must complete before first use. If the MCP server times out on first use, the browsers may still be installing in the background. Wait a few minutes and try again.
 
-Add this configuration to your Claude client's MCP server configuration:
+## Setup with Claude Desktop
+
+Add this configuration to your Claude Desktop MCP settings:
+
+**MacOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
-    "Cyber-Chitta": {
+    "scrapling-fetch": {
       "command": "uvx",
       "args": ["scrapling-fetch-mcp"]
     }
@@ -39,78 +48,49 @@ Add this configuration to your Claude client's MCP server configuration:
 }
 ```
 
-## Available Tools
+After updating the config, restart Claude Desktop.
 
-This package provides two distinct tools:
+## What It Does
 
-1. **s-fetch-page**: Retrieves complete web pages with pagination support
-2. **s-fetch-pattern**: Extracts content matching regex patterns with surrounding context
+This MCP server provides two tools that Claude can use automatically when you ask it to fetch web content:
 
-## Example Usage
+- **Page fetching**: Retrieves complete web pages with support for pagination
+- **Pattern extraction**: Finds and extracts specific content using regex patterns
 
-### Fetching a Complete Page
-
-```
-Human: Please fetch and summarize the documentation at https://example.com/docs
-
-Claude: I'll help you with that. Let me fetch the documentation.
-
-<mcp:function_calls>
-<mcp:invoke name="s-fetch-page">
-<mcp:parameter name="url">https://example.com/docs</mcp:parameter>
-<mcp:parameter name="mode">basic</mcp:parameter>
-</mcp:invoke>
-</mcp:function_calls>
-
-Based on the documentation I retrieved, here's a summary...
-```
-
-### Extracting Specific Content with Pattern Matching
+The AI decides which tool to use based on your request. You just ask naturally:
 
 ```
-Human: Please find all mentions of "API keys" on the documentation page.
-
-Claude: I'll search for that specific information.
-
-<mcp:function_calls>
-<mcp:invoke name="s-fetch-pattern">
-<mcp:parameter name="url">https://example.com/docs</mcp:parameter>
-<mcp:parameter name="mode">basic</mcp:parameter>
-<mcp:parameter name="search_pattern">API\s+keys?</mcp:parameter>
-<mcp:parameter name="context_chars">150</mcp:parameter>
-</mcp:invoke>
-</mcp:function_calls>
-
-I found several mentions of API keys in the documentation:
-...
+"Can you fetch the docs at https://example.com/api"
+"Find all mentions of 'authentication' on that page"
+"Get me the installation instructions from their homepage"
 ```
 
-## Functionality Options
+## Protection Modes
 
-- **Protection Levels**:
-  - `basic`: Fast retrieval (1-2 seconds) but lower success with heavily protected sites
-  - `stealth`: Balanced protection (3-8 seconds) that works with most sites
-  - `max-stealth`: Maximum protection (10+ seconds) for heavily protected sites
+The tools support three levels of bot detection bypass:
 
-- **Content Targeting Options**:
-  - **s-fetch-page**: Retrieve entire pages with pagination support (using `start_index` and `max_length`)
-  - **s-fetch-pattern**: Extract specific content using regular expressions (with `search_pattern` and `context_chars`)
-    - Results include position information for follow-up queries with `s-fetch-page`
+- **basic**: Fast (1-2s), works for most sites
+- **stealth**: Moderate (3-8s), handles more protection
+- **max-stealth**: Maximum (10+s), for heavily protected sites
+
+Claude automatically starts with `basic` mode and escalates if needed.
 
 ## Tips for Best Results
 
-- Start with `basic` mode and only escalate to higher protection levels if needed
-- For large documents, use the pagination parameters with `s-fetch-page`
-- Use `s-fetch-pattern` when looking for specific information on large pages
-- The AI will automatically adjust its approach based on the site's protection level
+- Just ask naturally - Claude handles the technical details
+- For large pages, Claude can page through content automatically
+- For specific searches, mention what you're looking for and Claude will use pattern matching
+- The metadata returned helps Claude decide whether to page or search
 
 ## Limitations
 
-- **Designed only for text content**: Specifically for documentation, articles, and reference materials
-- Not designed for high-volume scraping or data harvesting
+- Designed for text content only (documentation, articles, references)
+- Not for high-volume scraping or data harvesting
 - May not work with sites requiring authentication
-- Performance varies by site complexity
+- Performance varies by site complexity and protection level
+
+Built with [Scrapling](https://github.com/D4Vinci/Scrapling) for web scraping with bot detection bypass.
 
 ## License
 
-Apache 2
+Apache 2.0

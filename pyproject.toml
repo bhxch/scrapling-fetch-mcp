@@ -1,6 +1,6 @@
 [project]
 name = "scrapling-fetch-mcp"
-version = "0.1.6"
+version = "0.2.0"
 description = "Helps AI assistants access text content from bot-protected websites. MCP server that fetches HTML/markdown from sites with anti-automation measures using Scrapling."
 readme = "README.md"
 authors = [
@@ -13,12 +13,17 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "beautifulsoup4>=4.13.3",
-    "lxml>=5.3.1",
-    "markdownify>=1.1.0",
-    "mcp>=1.4.0",
+    "beautifulsoup4>=4.14.2",
+    "browserforge>=1.2.3",
+    "camoufox>=0.4.11",
+    "curl-cffi>=0.13.0",
+    "lxml>=6.0.2",
+    "markdownify>=1.2.0",
+    "mcp>=1.15.0",
+    "msgspec>=0.19.0",
     "packaging>=24.1, <25.0",
-    "scrapling>=0.2.98",
+    "playwright>=1.55.0",
+    "scrapling>=0.3.6",
 ]
 
 [project.urls]

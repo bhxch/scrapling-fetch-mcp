@@ -5,7 +5,7 @@ from typing import Any
 
 async def browse_url(url: str, mode: str) -> Any:
     with open(devnull, "w") as nullfd, redirect_stdout(nullfd):
-        from scrapling.defaults import AsyncFetcher, StealthyFetcher
+        from scrapling.fetchers import AsyncFetcher, StealthyFetcher
 
         if mode == "basic":
             return await AsyncFetcher.get(url, stealthy_headers=True)
