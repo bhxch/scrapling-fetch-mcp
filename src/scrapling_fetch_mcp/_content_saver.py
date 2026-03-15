@@ -206,3 +206,39 @@ class ContentSaver:
 
         mapping_file = self.save_dir / "image_mapping.json"
         mapping_file.write_text(dumps(mapping, indent=2), encoding="utf-8")
+
+    def create_page_action(self):
+        """Create page_action closure for scrapling image interception"""
+
+        async def page_action(page):
+            """Setup route to intercept and save images"""
+
+            async def handle_route(route):
+                """Handle intercepted route requests"""
+                try:
+                    # Fetch the resource
+                    response = await route.fetch()
+                    content_type = response.headers.get("content-type", "")
+
+                    # Only process images
+                    if "image" in content_type:
+                        body = await response.body()
+                        url = route.request.url
+
+                        # Save with deduplication
+                        await self.image_saver.save_image(url, body, content_type)
+
+                    # Fulfill the request
+                    await route.fulfill(response=response)
+
+                except Exception as e:
+                    self.logger.warning(f"Failed to intercept image: {e}")
+                    # Continue with original request
+                    await route.continue_()
+
+            # Register route for image types
+            await page.route(
+                "**/*.{png,jpg,jpeg,gif,svg,webp,ico,bmp}", handle_route
+            )
+
+        return page_action

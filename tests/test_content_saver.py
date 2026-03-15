@@ -229,3 +229,17 @@ class TestContentSaver:
         # Should create metadata.json
         metadata_file = saver.save_dir / "metadata.json"
         assert metadata_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_create_page_action(self, temp_dir):
+        """Test page_action creation for image interception"""
+        from scrapling_fetch_mcp._content_saver import ContentSaver
+
+        saver = ContentSaver(temp_dir, "https://example.com", "html")
+
+        # Create page_action
+        page_action = saver.create_page_action()
+        assert callable(page_action)
+
+        # Note: Full integration test will be done with real browser
+        # This just verifies the method exists and returns a callable
