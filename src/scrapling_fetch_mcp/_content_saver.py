@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Dict
 from urllib.parse import urlparse
 from logging import getLogger
+import re
+from bs4 import BeautifulSoup
 
 
 class ImageSaver:
@@ -86,3 +88,36 @@ class ImageSaver:
         self.hash_to_path[content_hash] = relative_path
 
         return relative_path
+
+
+class ContentModifier:
+    """Modifies HTML/Markdown content to use local image paths"""
+
+    def modify_html(self, html: str, url_to_local: Dict[str, str]) -> str:
+        """Replace image URLs with local paths in HTML, add data-original-src"""
+        soup = BeautifulSoup(html, "lxml")
+
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if src and src in url_to_local:
+                # Add data-original-src attribute
+                img["data-original-src"] = src
+                # Replace with local path
+                img["src"] = url_to_local[src]
+
+        return str(soup)
+
+    def modify_markdown(self, markdown: str, url_to_local: Dict[str, str]) -> str:
+        """Replace image URLs with local paths in Markdown"""
+
+        # Match markdown image syntax: ![alt](url)
+        pattern = r"!\[([^\]]*)\]\(([^\)]+)\)"
+
+        def replace_url(match):
+            alt = match.group(1)
+            url = match.group(2)
+            if url in url_to_local:
+                return f"![{alt}]({url_to_local[url]})"
+            return match.group(0)
+
+        return re.sub(pattern, replace_url, markdown)

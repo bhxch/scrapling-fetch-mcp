@@ -117,3 +117,61 @@ class TestImageSaver:
         # Both files should exist
         assert (temp_dir / path1).exists()
         assert (temp_dir / path2).exists()
+
+
+class TestContentModifier:
+    """Tests for ContentModifier class"""
+
+    def test_modify_html(self, sample_html):
+        """Test HTML modification"""
+        from scrapling_fetch_mcp._content_saver import ContentModifier
+
+        modifier = ContentModifier()
+        url_to_local = {
+            "https://example.com/logo.jpg": "images/logo.jpg",
+            "https://cdn.example.com/banner.png": "images/banner.png",
+        }
+
+        modified = modifier.modify_html(sample_html, url_to_local)
+
+        # Should contain local paths
+        assert 'src="images/logo.jpg"' in modified
+        assert 'src="images/banner.png"' in modified
+
+        # Should preserve original URLs in data attribute
+        assert 'data-original-src="https://example.com/logo.jpg"' in modified
+        assert 'data-original-src="https://cdn.example.com/banner.png"' in modified
+
+    def test_modify_markdown(self, sample_markdown):
+        """Test Markdown modification"""
+        from scrapling_fetch_mcp._content_saver import ContentModifier
+
+        modifier = ContentModifier()
+        url_to_local = {
+            "https://example.com/logo.jpg": "images/logo.jpg",
+            "https://cdn.example.com/banner.png": "images/banner.png",
+        }
+
+        modified = modifier.modify_markdown(sample_markdown, url_to_local)
+
+        # Should contain local paths
+        assert "](images/logo.jpg)" in modified
+        assert "](images/banner.png)" in modified
+
+        # Should not contain original URLs
+        assert "https://example.com/logo.jpg" not in modified
+        assert "https://cdn.example.com/banner.png" not in modified
+
+    def test_modify_html_unknown_url(self):
+        """Test that unknown URLs are left unchanged"""
+        from scrapling_fetch_mcp._content_saver import ContentModifier
+
+        modifier = ContentModifier()
+        html = '<img src="https://unknown.com/img.jpg" alt="Unknown">'
+        url_to_local = {"https://example.com/logo.jpg": "images/logo.jpg"}
+
+        modified = modifier.modify_html(html, url_to_local)
+
+        # Unknown URL should remain unchanged
+        assert 'src="https://unknown.com/img.jpg"' in modified
+        assert "data-original-src" not in modified
