@@ -175,3 +175,57 @@ class TestContentModifier:
         # Unknown URL should remain unchanged
         assert 'src="https://unknown.com/img.jpg"' in modified
         assert "data-original-src" not in modified
+
+
+class TestContentSaver:
+    """Tests for ContentSaver class"""
+
+    def test_create_save_dir(self, temp_dir):
+        """Test save directory creation"""
+        from scrapling_fetch_mcp._content_saver import ContentSaver
+        from datetime import datetime
+
+        url = "https://example.com/page"
+        saver = ContentSaver(temp_dir, url, "html")
+
+        # Should create directory
+        assert saver.save_dir.exists()
+        assert saver.save_dir.parent == temp_dir
+
+        # Should include domain and timestamp
+        dir_name = saver.save_dir.name
+        assert dir_name.startswith("example.com_")
+
+    def test_create_save_dir_conflict(self, temp_dir):
+        """Test directory name conflict resolution"""
+        from scrapling_fetch_mcp._content_saver import ContentSaver
+
+        url = "https://example.com/page"
+        saver1 = ContentSaver(temp_dir, url, "html")
+        saver2 = ContentSaver(temp_dir, url, "html")
+
+        # Should create different directories
+        assert saver1.save_dir != saver2.save_dir
+        assert saver2.save_dir.name.endswith("_2")
+
+    @pytest.mark.asyncio
+    async def test_save_content(self, temp_dir, sample_html):
+        """Test saving complete content"""
+        from scrapling_fetch_mcp._content_saver import ContentSaver
+
+        url = "https://example.com/page"
+        saver = ContentSaver(temp_dir, url, "html")
+
+        # Mock page object (we'll need real page later)
+        modified_html = await saver.save_content(sample_html)
+
+        # Should return modified HTML
+        assert modified_html is not None
+
+        # Should create page.html
+        html_file = saver.save_dir / "page.html"
+        assert html_file.exists()
+
+        # Should create metadata.json
+        metadata_file = saver.save_dir / "metadata.json"
+        assert metadata_file.exists()

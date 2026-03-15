@@ -6,6 +6,9 @@ from urllib.parse import urlparse
 from logging import getLogger
 import re
 from bs4 import BeautifulSoup
+from datetime import datetime
+from json import dumps
+from typing import Optional
 
 
 class ImageSaver:
@@ -121,3 +124,85 @@ class ContentModifier:
             return match.group(0)
 
         return re.sub(pattern, replace_url, markdown)
+
+
+class ContentSaver:
+    """Main orchestrator for saving web content"""
+
+    def __init__(self, scraping_dir: Path, url: str, format: str):
+        self.scraping_dir = scraping_dir
+        self.url = url
+        self.format = format
+        self.logger = getLogger(__name__)
+        self.save_dir = self._create_save_dir()
+        self.image_saver = ImageSaver(self.save_dir)
+        self.content_modifier = ContentModifier()
+
+    def _create_save_dir(self) -> Path:
+        """Create unique save directory (domain_timestamp)"""
+        from urllib.parse import urlparse
+
+        # Extract domain from URL
+        parsed = urlparse(self.url)
+        domain = parsed.netloc.replace("www.", "")
+
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dir_name = f"{domain}_{timestamp}"
+
+        # Create base directory
+        save_path = self.scraping_dir / dir_name
+
+        # Handle conflicts
+        if save_path.exists():
+            counter = 2
+            while True:
+                save_path = self.scraping_dir / f"{dir_name}_{counter}"
+                if not save_path.exists():
+                    break
+                counter += 1
+
+        save_path.mkdir(parents=True, exist_ok=True)
+        self.logger.info(f"Created save directory: {save_path}")
+
+        return save_path
+
+    async def save_content(self, html_content: str) -> str:
+        """Save content and return modified HTML"""
+        # Modify content to use local image paths
+        modified_html = self.content_modifier.modify_html(
+            html_content, self.image_saver.url_to_local
+        )
+
+        # Save HTML file
+        html_file = self.save_dir / "page.html"
+        html_file.write_text(modified_html, encoding="utf-8")
+
+        # Save metadata
+        self._save_metadata()
+
+        # Save image mapping
+        self._save_image_mapping()
+
+        return modified_html
+
+    def _save_metadata(self) -> None:
+        """Save page metadata"""
+        metadata = {
+            "url": self.url,
+            "fetch_time": datetime.now().isoformat(),
+            "format": self.format,
+        }
+
+        metadata_file = self.save_dir / "metadata.json"
+        metadata_file.write_text(dumps(metadata, indent=2), encoding="utf-8")
+
+    def _save_image_mapping(self) -> None:
+        """Save URL to local path mapping"""
+        mapping = [
+            {"original_url": url, "local_path": path}
+            for url, path in self.image_saver.url_to_local.items()
+        ]
+
+        mapping_file = self.save_dir / "image_mapping.json"
+        mapping_file.write_text(dumps(mapping, indent=2), encoding="utf-8")
