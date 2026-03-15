@@ -168,15 +168,28 @@ class ContentSaver:
         return save_path
 
     async def save_content(self, html_content: str) -> str:
-        """Save content and return modified HTML"""
-        # Modify content to use local image paths
+        """Save content and return modified HTML or Markdown"""
+        # Modify HTML to use local image paths
         modified_html = self.content_modifier.modify_html(
             html_content, self.image_saver.url_to_local
         )
 
-        # Save HTML file
-        html_file = self.save_dir / "page.html"
-        html_file.write_text(modified_html, encoding="utf-8")
+        if self.format == "markdown":
+            # Convert to markdown, then modify markdown image paths
+            from scrapling_fetch_mcp._fetcher import _html_to_markdown
+            markdown_content = _html_to_markdown(modified_html)
+            final_content = self.content_modifier.modify_markdown(
+                markdown_content, self.image_saver.url_to_local
+            )
+
+            # Save as .md file
+            content_file = self.save_dir / "page.md"
+            content_file.write_text(final_content, encoding="utf-8")
+        else:
+            # Save HTML
+            content_file = self.save_dir / "page.html"
+            content_file.write_text(modified_html, encoding="utf-8")
+            final_content = modified_html
 
         # Save metadata
         self._save_metadata()
@@ -184,7 +197,7 @@ class ContentSaver:
         # Save image mapping
         self._save_image_mapping()
 
-        return modified_html
+        return final_content
 
     def _save_metadata(self) -> None:
         """Save page metadata"""

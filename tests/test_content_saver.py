@@ -243,3 +243,20 @@ class TestContentSaver:
 
         # Note: Full integration test will be done with real browser
         # This just verifies the method exists and returns a callable
+
+    @pytest.mark.asyncio
+    async def test_save_content_markdown(self, temp_dir, sample_html):
+        """Test saving content as markdown"""
+        from scrapling_fetch_mcp._content_saver import ContentSaver
+
+        saver = ContentSaver(temp_dir, "https://example.com/page", "markdown")
+
+        modified = await saver.save_content(sample_html)
+
+        # Should create page.md not page.html
+        md_file = saver.save_dir / "page.md"
+        assert md_file.exists()
+
+        # Should not create page.html
+        html_file = saver.save_dir / "page.html"
+        assert not html_file.exists()
