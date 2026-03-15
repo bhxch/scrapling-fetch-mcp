@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 from logging import getLogger
 from traceback import format_exc
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -20,6 +21,8 @@ async def s_fetch_page(
     format: str = "markdown",
     max_length: int = 5000,
     start_index: int = 0,
+    save_content: bool = False,
+    scraping_dir: str = ".temp/scrapling/",
 ) -> str:
     """Fetches a complete web page with pagination support. Retrieves content from websites with bot-detection avoidance. Content is returned as 'METADATA: {json}\\n\\n[content]' where metadata includes length information and truncation status.
 
@@ -33,9 +36,21 @@ async def s_fetch_page(
         format: Output format (html or markdown)
         max_length: Maximum number of characters to return.
         start_index: On return output starting at this character index, useful if a previous fetch was truncated and more content is required.
+        save_content: If True, save complete page content (HTML/Markdown + images) to local filesystem for offline viewing.
+        scraping_dir: Directory path for saved content (relative or absolute). Default: .temp/scrapling/
     """
     try:
-        result = await fetch_page_impl(url, mode, format, max_length, start_index)
+        scraping_path = Path(scraping_dir)
+
+        result = await fetch_page_impl(
+            url,
+            mode,
+            format,
+            max_length,
+            start_index,
+            save_content=save_content,
+            scraping_dir=scraping_path,
+        )
         return result
     except Exception as e:
         logger = getLogger("scrapling_fetch_mcp")
@@ -100,6 +115,15 @@ def run_server():
         "Set to 0 to disable caching. Default: 300 (5 minutes). "
         "Can also be set via SCRAPLING_CACHE_TTL environment variable.",
     )
+    parser.add_argument(
+        "--scraping-dir",
+        type=str,
+        default=".temp/scrapling/",
+        help="Default directory for saving scraped content (HTML + images). "
+        "Can be overridden per-request with scraping_dir parameter. "
+        "Default: .temp/scrapling/ "
+        "Can also be set via SCRAPING_DIR environment variable.",
+    )
     args = parser.parse_args()
 
     # Initialize from environment first
@@ -112,10 +136,14 @@ def run_server():
     if args.cache_ttl is not None:
         config.set_cache_ttl(args.cache_ttl)
 
+    if args.scraping_dir:
+        config.set_scraping_dir(args.scraping_dir)
+
     # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
     logger.info(f"Minimum mode set to: {config.min_mode}")
     logger.info(f"Cache TTL set to: {config.cache_ttl} seconds")
+    logger.info(f"Scraping directory set to: {config.scraping_dir}")
 
     mcp.run(transport="stdio")
 
