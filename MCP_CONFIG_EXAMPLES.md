@@ -1,0 +1,77 @@
+# MCP Configuration Examples
+
+## Basic Configuration (Default)
+
+The default configuration uses basic mode with automatic escalation:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"]
+    }
+  }
+}
+```
+
+## Minimum Mode Configuration (Recommended for Bot-Protected Sites)
+
+To avoid multiple retry attempts that can trigger rate limits, configure a minimum mode:
+
+### Using Command Line Arguments
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--min-mode", "stealth"]
+    }
+  }
+}
+```
+
+### Using Environment Variables
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_MIN_MODE": "stealth"
+      }
+    }
+  }
+}
+```
+
+## Maximum Protection Configuration
+
+For heavily protected sites, use max-stealth as the minimum:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--min-mode", "max-stealth"]
+    }
+  }
+}
+```
+
+## Mode Hierarchy
+
+- **basic**: Fast (1-2s), works for most sites
+- **stealth**: Moderate (3-8s), handles more protection
+- **max-stealth**: Maximum (10+s), for heavily protected sites
+
+When you set `--min-mode stealth`:
+- Requests for "basic" → upgraded to "stealth"
+- Requests for "stealth" → stays "stealth"
+- Requests for "max-stealth" → stays "max-stealth"
+
+This prevents the retry pattern (basic → fail → stealth → fail → max-stealth) that can trigger anti-bot protections.
