@@ -165,15 +165,81 @@ Or using environment variables:
 - Set to 0 to disable caching
 - Cache is URL + mode specific (same URL with different modes are cached separately)
 
-### Mode Hierarchy
+## Content Saving Feature
 
-The modes follow a hierarchy where each level includes all previous capabilities:
+Save complete web pages (HTML/Markdown + images) to your local filesystem for offline viewing.
+
+### Basic Usage
+
+```python
+# The AI can save pages with images for offline viewing
+# Just mention you want to save or keep the content locally
+"Can you fetch and save the article at https://example.com/guide"
+"Save that documentation page so I can view it offline"
+```
+
+### Directory Structure
+
+Saved content is organized as:
 
 ```
-basic < stealth < max-stealth
+.temp/scrapling/
+├── example.com_20260316_143025/
+│   ├── page.html          # Modified HTML with local image paths
+│   ├── metadata.json      # Page metadata (URL, fetch time, mode)
+│   ├── images/            # Downloaded images (deduplicated)
+│   │   ├── logo.jpg
+│   │   └── banner.png
+│   └── image_mapping.json # Original URL -> local path mapping
 ```
 
-When you set `--min-mode stealth`, all requests will use at least `stealth` mode, even if the AI requests `basic`. This prevents the pattern of trying `basic` → failing → retrying with `stealth`, which can trigger anti-bot protections.
+### Features
+
+- **Offline viewing**: All images are downloaded and referenced locally
+- **Image deduplication**: Identical images (same hash) stored only once
+- **URL preservation**: Original image URLs saved in `data-original-src` attributes and `image_mapping.json`
+- **Markdown support**: Save as Markdown with local image references
+
+### Requirements
+
+- Use `mode="max-stealth"` or `mode="stealth"` (basic mode may not load images)
+- Images are intercepted during page load via patchright route handling
+
+### Scraping Directory Configuration
+
+Configure where saved content is stored:
+
+**Command Line:**
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--scraping-dir", "/custom/scraping/path/"
+      ]
+    }
+  }
+}
+```
+
+**Environment Variable:**
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_DIR": "/custom/scraping/path/"
+      }
+    }
+  }
+}
+```
+
+**Default**: `.temp/scrapling/`
 
 ## Tips for Best Results
 

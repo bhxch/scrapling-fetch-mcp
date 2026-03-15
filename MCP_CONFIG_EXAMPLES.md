@@ -99,6 +99,65 @@ Recommended for large documentation sites:
 }
 ```
 
+## Content Saving Configuration
+
+Configure where saved web content (HTML + images) is stored:
+
+### Default Scraping Directory
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"]
+    }
+  }
+}
+```
+
+Default: `.temp/scrapling/`
+
+### Custom Scraping Directory
+
+**Command Line:**
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--scraping-dir", "/Users/username/.scraping/"
+      ]
+    }
+  }
+}
+```
+
+**Environment Variable:**
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPING_DIR": "/Users/username/.scraping/"
+      }
+    }
+  }
+}
+```
+
+### Per-Request Override
+
+The AI can override the default scraping directory on a per-request basis when saving content:
+
+```
+"Save that documentation page to /tmp/docs/"
+```
+
 ## Complete Configuration Example
 
 Combine minimum mode and caching for optimal performance:
