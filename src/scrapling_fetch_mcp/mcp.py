@@ -1,8 +1,10 @@
+from argparse import ArgumentParser
 from logging import getLogger
 from traceback import format_exc
 
 from mcp.server.fastmcp import FastMCP
 
+from scrapling_fetch_mcp._config import config, init_config_from_env
 from scrapling_fetch_mcp._fetcher import (
     fetch_page_impl,
     fetch_pattern_impl,
@@ -19,11 +21,13 @@ async def s_fetch_page(
     max_length: int = 5000,
     start_index: int = 0,
 ) -> str:
-    """Fetches a complete web page with pagination support. Retrieves content from websites with bot-detection avoidance. For best performance, start with 'basic' mode (fastest), then only escalate to 'stealth' or 'max-stealth' modes if basic mode fails. Content is returned as 'METADATA: {json}\\n\\n[content]' where metadata includes length information and truncation status.
+    """Fetches a complete web page with pagination support. Retrieves content from websites with bot-detection avoidance. Content is returned as 'METADATA: {json}\\n\\n[content]' where metadata includes length information and truncation status.
+
+    The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
 
     Args:
         url: URL to fetch
-        mode: Fetching mode (basic, stealth, or max-stealth)
+        mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
         format: Output format (html or markdown)
         max_length: Maximum number of characters to return.
         start_index: On return output starting at this character index, useful if a previous fetch was truncated and more content is required.
@@ -47,12 +51,14 @@ async def s_fetch_pattern(
     max_length: int = 5000,
     context_chars: int = 200,
 ) -> str:
-    """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. For best performance, start with 'basic' mode (fastest), then only escalate to 'stealth' or 'max-stealth' modes if basic mode fails. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
+    """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
+
+    The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
 
     Args:
         url: URL to fetch
         search_pattern: Regular expression pattern to search for in the content
-        mode: Fetching mode (basic, stealth, or max-stealth)
+        mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
         format: Output format (html or markdown)
         max_length: Maximum number of characters to return.
         context_chars: Number of characters to include before and after each match
@@ -70,6 +76,30 @@ async def s_fetch_pattern(
 
 
 def run_server():
+    """Parse CLI arguments and start the MCP server"""
+    parser = ArgumentParser(
+        description="Scrapling Fetch MCP Server - Fetch web content with bot-detection avoidance"
+    )
+    parser.add_argument(
+        "--min-mode",
+        choices=["basic", "stealth", "max-stealth"],
+        help="Minimum fetching mode level. All requests will use at least this mode, "
+        "preventing multiple retries from basic to higher modes. "
+        "Can also be set via SCRAPLING_MIN_MODE environment variable.",
+    )
+    args = parser.parse_args()
+
+    # Initialize from environment first
+    init_config_from_env()
+
+    # CLI args override environment variables
+    if args.min_mode:
+        config.set_min_mode(args.min_mode)
+
+    # Log the effective minimum mode
+    logger = getLogger("scrapling_fetch_mcp")
+    logger.info(f"Minimum mode set to: {config.min_mode}")
+
     mcp.run(transport="stdio")
 
 

@@ -73,7 +73,50 @@ The tools support three levels of bot detection bypass:
 - **stealth**: Moderate (3-8s), handles more protection
 - **max-stealth**: Maximum (10+s), for heavily protected sites
 
-Claude automatically starts with `basic` mode and escalates if needed.
+By default, Claude automatically starts with `basic` mode and escalates if needed. However, this can result in multiple requests to the same site, potentially triggering rate limits.
+
+## Minimum Mode Configuration
+
+To prevent multiple retry attempts and reduce the risk of being blocked, you can configure a minimum fetching mode. This ensures all requests use at least the specified mode level, avoiding unnecessary retries.
+
+### Using Command Line Arguments
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--min-mode", "stealth"]
+    }
+  }
+}
+```
+
+### Using Environment Variables
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_MIN_MODE": "stealth"
+      }
+    }
+  }
+}
+```
+
+### Mode Hierarchy
+
+The modes follow a hierarchy where each level includes all previous capabilities:
+
+```
+basic < stealth < max-stealth
+```
+
+When you set `--min-mode stealth`, all requests will use at least `stealth` mode, even if the AI requests `basic`. This prevents the pattern of trying `basic` → failing → retrying with `stealth`, which can trigger anti-bot protections.
 
 ## Tips for Best Results
 

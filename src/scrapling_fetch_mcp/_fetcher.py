@@ -6,6 +6,7 @@ from typing import Optional
 
 from bs4 import BeautifulSoup
 
+from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
 from scrapling_fetch_mcp._scrapling import browse_url
 
@@ -75,7 +76,8 @@ def _create_metadata(
 async def fetch_page_impl(
     url: str, mode: str, format: str, max_length: int, start_index: int
 ) -> str:
-    page = await browse_url(url, mode)
+    effective_mode = config.get_effective_mode(mode)
+    page = await browse_url(url, effective_mode)
     is_markdown = format == "markdown"
     full_content = (
         _html_to_markdown(page.html_content) if is_markdown else page.html_content
@@ -99,7 +101,8 @@ async def fetch_pattern_impl(
     max_length: int,
     context_chars: int,
 ) -> str:
-    page = await browse_url(url, mode)
+    effective_mode = config.get_effective_mode(mode)
+    page = await browse_url(url, effective_mode)
     is_markdown = format == "markdown"
     full_content = (
         _html_to_markdown(page.html_content) if is_markdown else page.html_content
