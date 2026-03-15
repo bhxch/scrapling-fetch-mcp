@@ -3,12 +3,14 @@ from json import dumps
 from re import compile
 from re import error as re_error
 from typing import Optional
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
 from scrapling_fetch_mcp._scrapling import browse_url
+from scrapling_fetch_mcp._content_saver import ContentSaver
 
 
 def _html_to_markdown(html: str) -> str:
@@ -74,9 +76,22 @@ def _create_metadata(
 
 
 async def fetch_page_impl(
-    url: str, mode: str, format: str, max_length: int, start_index: int
+    url: str,
+    mode: str,
+    format: str,
+    max_length: int,
+    start_index: int,
+    save_content: bool = False,
+    scraping_dir: Optional[Path] = None,
 ) -> str:
     effective_mode = config.get_effective_mode(mode)
+
+    # Setup content saver if needed
+    content_saver = None
+    page_action = None
+    if save_content and scraping_dir:
+        content_saver = ContentSaver(scraping_dir, url, format)
+        page_action = content_saver.create_page_action()
 
     # Check cache first
     cached_page = config.cache.get(url, effective_mode)
@@ -84,12 +99,21 @@ async def fetch_page_impl(
         page = cached_page
     else:
         # Fetch and cache the page
-        page = await browse_url(url, effective_mode)
+        page = await browse_url(url, effective_mode, page_action=page_action)
         config.cache.set(url, effective_mode, page)
 
     is_markdown = format == "markdown"
+
+    # Get HTML content
+    html_content = page.html_content
+
+    # Save content if requested
+    if content_saver:
+        html_content = await content_saver.save_content(html_content)
+
+    # Convert to markdown if needed
     full_content = (
-        _html_to_markdown(page.html_content) if is_markdown else page.html_content
+        _html_to_markdown(html_content) if is_markdown else html_content
     )
 
     total_length = len(full_content)
