@@ -49,3 +49,40 @@ class ImageSaver:
 
         # Fallback to index-based name
         return f"image_{index}{ext}"
+
+    async def save_image(self, url: str, content: bytes, content_type: str) -> str:
+        """Save image with deduplication, return relative local path"""
+
+        # Check if we already saved this URL
+        if url in self.url_to_local:
+            self.logger.debug(f"Image URL already saved: {url}")
+            return self.url_to_local[url]
+
+        # Calculate hash for deduplication
+        content_hash = self._calculate_hash(content)
+
+        # Check if identical image already exists (different URL, same content)
+        if content_hash in self.hash_to_path:
+            existing_path = self.hash_to_path[content_hash]
+            self.logger.info(f"Duplicate image found: {url} -> {existing_path}")
+            self.url_to_local[url] = existing_path
+            return existing_path
+
+        # Create images directory
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate unique filename
+        index = len(self.url_to_local)
+        filename = self._generate_filename(url, content_type, index)
+        relative_path = f"images/{filename}"
+        full_path = self.images_dir / filename
+
+        # Save the image
+        full_path.write_bytes(content)
+        self.logger.info(f"Saved image: {url} -> {relative_path}")
+
+        # Update mappings
+        self.url_to_local[url] = relative_path
+        self.hash_to_path[content_hash] = relative_path
+
+        return relative_path
