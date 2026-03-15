@@ -25,6 +25,8 @@ async def s_fetch_page(
 
     The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
 
+    Pages are cached for the configured TTL (--cache-ttl, default 300 seconds) to avoid repeated requests when fetching large pages in segments using start_index parameter.
+
     Args:
         url: URL to fetch
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
@@ -54,6 +56,8 @@ async def s_fetch_pattern(
     """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
 
     The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
+
+    Pages are cached for the configured TTL (--cache-ttl, default 300 seconds) to avoid repeated requests when searching the same page with different patterns.
 
     Args:
         url: URL to fetch
@@ -87,6 +91,15 @@ def run_server():
         "preventing multiple retries from basic to higher modes. "
         "Can also be set via SCRAPLING_MIN_MODE environment variable.",
     )
+    parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=300,
+        help="Cache time-to-live in seconds for fetched pages. "
+        "When fetching large pages in segments, this prevents repeated requests to the same URL. "
+        "Set to 0 to disable caching. Default: 300 (5 minutes). "
+        "Can also be set via SCRAPLING_CACHE_TTL environment variable.",
+    )
     args = parser.parse_args()
 
     # Initialize from environment first
@@ -96,9 +109,13 @@ def run_server():
     if args.min_mode:
         config.set_min_mode(args.min_mode)
 
-    # Log the effective minimum mode
+    if args.cache_ttl is not None:
+        config.set_cache_ttl(args.cache_ttl)
+
+    # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
     logger.info(f"Minimum mode set to: {config.min_mode}")
+    logger.info(f"Cache TTL set to: {config.cache_ttl} seconds")
 
     mcp.run(transport="stdio")
 

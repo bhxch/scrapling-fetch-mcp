@@ -118,6 +118,63 @@ basic < stealth < max-stealth
 
 When you set `--min-mode stealth`, all requests will use at least `stealth` mode, even if the AI requests `basic`. This prevents the pattern of trying `basic` → failing → retrying with `stealth`, which can trigger anti-bot protections.
 
+## Page Caching
+
+To avoid repeated requests when fetching large pages in segments, the server caches page content for a configurable time period. This is especially useful when:
+
+- Fetching large documentation pages that need multiple requests with different `start_index` values
+- Searching the same page with multiple regex patterns
+- Retrying failed requests without re-fetching the entire page
+
+### Cache Configuration
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--min-mode", "stealth",
+        "--cache-ttl", "600"
+      ]
+    }
+  }
+}
+```
+
+Or using environment variables:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_MIN_MODE": "stealth",
+        "SCRAPLING_CACHE_TTL": "600"
+      }
+    }
+  }
+}
+```
+
+**Cache settings:**
+- Default TTL: 300 seconds (5 minutes)
+- Set to 0 to disable caching
+- Cache is URL + mode specific (same URL with different modes are cached separately)
+
+### Mode Hierarchy
+
+The modes follow a hierarchy where each level includes all previous capabilities:
+
+```
+basic < stealth < max-stealth
+```
+
+When you set `--min-mode stealth`, all requests will use at least `stealth` mode, even if the AI requests `basic`. This prevents the pattern of trying `basic` → failing → retrying with `stealth`, which can trigger anti-bot protections.
+
 ## Tips for Best Results
 
 - Just ask naturally - Claude handles the technical details

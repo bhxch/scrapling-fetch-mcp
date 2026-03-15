@@ -1,6 +1,8 @@
 """Global configuration for scrapling-fetch-mcp"""
 
 from os import getenv
+from time import time
+from typing import Any, Optional
 
 # Mode hierarchy: basic < stealth < max-stealth
 MODE_LEVELS = {
@@ -10,11 +12,57 @@ MODE_LEVELS = {
 }
 
 
+class PageCache:
+    """Simple in-memory cache with TTL for page content"""
+
+    def __init__(self, ttl_seconds: int = 300):
+        self._cache: dict[str, tuple[str, float, Any]] = {}  # key -> (mode, timestamp, content)
+        self._ttl = ttl_seconds
+
+    def _make_key(self, url: str, mode: str) -> str:
+        """Create cache key from URL and mode"""
+        return f"{mode}:{url}"
+
+    def get(self, url: str, mode: str) -> Optional[Any]:
+        """Get cached page content if not expired"""
+        key = self._make_key(url, mode)
+        if key in self._cache:
+            cached_mode, timestamp, content = self._cache[key]
+            if time() - timestamp < self._ttl:
+                return content
+            else:
+                # Remove expired entry
+                del self._cache[key]
+        return None
+
+    def set(self, url: str, mode: str, content: Any) -> None:
+        """Cache page content with current timestamp"""
+        key = self._make_key(url, mode)
+        self._cache[key] = (mode, time(), content)
+
+    def clear_expired(self) -> int:
+        """Remove all expired entries, return count of removed entries"""
+        current_time = time()
+        expired_keys = [
+            key for key, (_, timestamp, _) in self._cache.items()
+            if current_time - timestamp >= self._ttl
+        ]
+        for key in expired_keys:
+            del self._cache[key]
+        return len(expired_keys)
+
+    def clear_all(self) -> None:
+        """Clear all cached entries"""
+        self._cache.clear()
+
+
 class Config:
     """Global configuration singleton"""
 
     _instance = None
     _min_mode: str = "basic"
+    _cache_ttl: int = 300  # Default 5 minutes
+    _cache: Optional[PageCache] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -26,6 +74,18 @@ class Config:
         """Get the minimum mode level"""
         return self._min_mode
 
+    @property
+    def cache_ttl(self) -> int:
+        """Get cache TTL in seconds"""
+        return self._cache_ttl
+
+    @property
+    def cache(self) -> PageCache:
+        """Get or create the page cache"""
+        if self._cache is None:
+            self._cache = PageCache(self._cache_ttl)
+        return self._cache
+
     def set_min_mode(self, mode: str) -> None:
         """Set the minimum mode level from CLI or environment"""
         if mode not in MODE_LEVELS:
@@ -33,6 +93,14 @@ class Config:
                 f"Invalid mode '{mode}'. Must be one of: {list(MODE_LEVELS.keys())}"
             )
         self._min_mode = mode
+
+    def set_cache_ttl(self, ttl_seconds: int) -> None:
+        """Set cache TTL in seconds"""
+        if ttl_seconds < 0:
+            raise ValueError("Cache TTL must be non-negative")
+        self._cache_ttl = ttl_seconds
+        # Recreate cache with new TTL
+        self._cache = PageCache(self._cache_ttl)
 
     def get_effective_mode(self, requested_mode: str) -> str:
         """
@@ -63,3 +131,11 @@ def init_config_from_env() -> None:
     env_min_mode = getenv("SCRAPLING_MIN_MODE", "").lower()
     if env_min_mode and env_min_mode in MODE_LEVELS:
         config.set_min_mode(env_min_mode)
+
+    env_cache_ttl = getenv("SCRAPLING_CACHE_TTL", "")
+    if env_cache_ttl:
+        try:
+            ttl = int(env_cache_ttl)
+            config.set_cache_ttl(ttl)
+        except ValueError:
+            pass  # Invalid value, use default

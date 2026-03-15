@@ -2,7 +2,7 @@
 
 ## Basic Configuration (Default)
 
-The default configuration uses basic mode with automatic escalation:
+The default configuration uses basic mode with automatic escalation and 5-minute cache:
 
 ```json
 {
@@ -48,6 +48,93 @@ To avoid multiple retry attempts that can trigger rate limits, configure a minim
 }
 ```
 
+## Page Caching Configuration
+
+Cache page content to avoid repeated requests when fetching large pages in segments:
+
+### Default Cache (5 minutes)
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"]
+    }
+  }
+}
+```
+
+### Extended Cache (10 minutes)
+
+Recommended for large documentation sites:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--cache-ttl", "600"
+      ]
+    }
+  }
+}
+```
+
+### Disable Caching
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--cache-ttl", "0"
+      ]
+    }
+  }
+}
+```
+
+## Complete Configuration Example
+
+Combine minimum mode and caching for optimal performance:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--min-mode", "stealth",
+        "--cache-ttl", "600"
+      ]
+    }
+  }
+}
+```
+
+Or with environment variables:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_MIN_MODE": "stealth",
+        "SCRAPLING_CACHE_TTL": "600"
+      }
+    }
+  }
+}
+```
+
 ## Maximum Protection Configuration
 
 For heavily protected sites, use max-stealth as the minimum:
@@ -57,7 +144,11 @@ For heavily protected sites, use max-stealth as the minimum:
   "mcpServers": {
     "scrapling-fetch": {
       "command": "uvx",
-      "args": ["scrapling-fetch-mcp", "--min-mode", "max-stealth"]
+      "args": [
+        "scrapling-fetch-mcp",
+        "--min-mode", "max-stealth",
+        "--cache-ttl", "900"
+      ]
     }
   }
 }
@@ -75,3 +166,12 @@ When you set `--min-mode stealth`:
 - Requests for "max-stealth" → stays "max-stealth"
 
 This prevents the retry pattern (basic → fail → stealth → fail → max-stealth) that can trigger anti-bot protections.
+
+## Cache Benefits
+
+The page cache helps when:
+- Fetching large pages in segments (using `start_index`)
+- Searching the same page with multiple patterns
+- Retrying requests without re-fetching
+
+Cache is automatically invalidated after the TTL expires.

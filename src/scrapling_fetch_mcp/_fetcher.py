@@ -77,7 +77,16 @@ async def fetch_page_impl(
     url: str, mode: str, format: str, max_length: int, start_index: int
 ) -> str:
     effective_mode = config.get_effective_mode(mode)
-    page = await browse_url(url, effective_mode)
+
+    # Check cache first
+    cached_page = config.cache.get(url, effective_mode)
+    if cached_page is not None:
+        page = cached_page
+    else:
+        # Fetch and cache the page
+        page = await browse_url(url, effective_mode)
+        config.cache.set(url, effective_mode, page)
+
     is_markdown = format == "markdown"
     full_content = (
         _html_to_markdown(page.html_content) if is_markdown else page.html_content
@@ -102,7 +111,16 @@ async def fetch_pattern_impl(
     context_chars: int,
 ) -> str:
     effective_mode = config.get_effective_mode(mode)
-    page = await browse_url(url, effective_mode)
+
+    # Check cache first
+    cached_page = config.cache.get(url, effective_mode)
+    if cached_page is not None:
+        page = cached_page
+    else:
+        # Fetch and cache the page
+        page = await browse_url(url, effective_mode)
+        config.cache.set(url, effective_mode, page)
+
     is_markdown = format == "markdown"
     full_content = (
         _html_to_markdown(page.html_content) if is_markdown else page.html_content
