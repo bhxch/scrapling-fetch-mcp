@@ -3,6 +3,7 @@
 from os import getenv
 from time import time
 from typing import Any, Optional
+from pathlib import Path
 
 # Mode hierarchy: basic < stealth < max-stealth
 MODE_LEVELS = {
@@ -63,6 +64,7 @@ class Config:
     _min_mode: str = "basic"
     _cache_ttl: int = 300  # Default 5 minutes
     _cache: Optional[PageCache] = None
+    _scraping_dir: Path = Path(".temp/scrapling/")
 
     def __new__(cls):
         if cls._instance is None:
@@ -86,6 +88,11 @@ class Config:
             self._cache = PageCache(self._cache_ttl)
         return self._cache
 
+    @property
+    def scraping_dir(self) -> Path:
+        """Get the scraping directory"""
+        return self._scraping_dir
+
     def set_min_mode(self, mode: str) -> None:
         """Set the minimum mode level from CLI or environment"""
         if mode not in MODE_LEVELS:
@@ -101,6 +108,12 @@ class Config:
         self._cache_ttl = ttl_seconds
         # Recreate cache with new TTL
         self._cache = PageCache(self._cache_ttl)
+
+    def set_scraping_dir(self, path: Path | str) -> None:
+        """Set the scraping directory"""
+        if isinstance(path, str):
+            path = Path(path)
+        self._scraping_dir = path
 
     def get_effective_mode(self, requested_mode: str) -> str:
         """
@@ -139,3 +152,8 @@ def init_config_from_env() -> None:
             config.set_cache_ttl(ttl)
         except ValueError:
             pass  # Invalid value, use default
+
+    # Load scraping_dir from environment
+    env_scraping_dir = getenv("SCRAPING_DIR", "")
+    if env_scraping_dir:
+        config.set_scraping_dir(env_scraping_dir)
