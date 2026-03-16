@@ -96,21 +96,57 @@ class ImageSaver:
 class ContentModifier:
     """Modifies HTML/Markdown content to use local image paths"""
 
-    def modify_html(self, html: str, url_to_local: Dict[str, str]) -> str:
+    def __init__(self):
+        self.logger = getLogger(__name__)
+
+    def _normalize_url(self, url: str, base_url: str) -> str:
+        """Normalize relative URLs to absolute URLs for matching"""
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+        elif url.startswith("//"):
+            # Protocol-relative URL
+            parsed = urlparse(base_url)
+            return f"{parsed.scheme}:{url}"
+        elif url.startswith("/"):
+            # Absolute path
+            parsed = urlparse(base_url)
+            return f"{parsed.scheme}://{parsed.netloc}{url}"
+        else:
+            # Relative path
+            parsed = urlparse(base_url)
+            base_path = parsed.path.rsplit("/", 1)[0] if "/" in parsed.path else ""
+            return f"{parsed.scheme}://{parsed.netloc}{base_path}/{url}"
+
+    def modify_html(self, html: str, url_to_local: Dict[str, str], base_url: str = "") -> str:
         """Replace image URLs with local paths in HTML, add data-original-src"""
         soup = BeautifulSoup(html, "lxml")
 
         for img in soup.find_all("img"):
             src = img.get("src")
-            if src and src in url_to_local:
+            if not src:
+                continue
+
+            # Try to match the URL directly first
+            if src in url_to_local:
                 # Add data-original-src attribute
                 img["data-original-src"] = src
                 # Replace with local path
                 img["src"] = url_to_local[src]
+                self.logger.debug(f"Modified img src: {src} -> {url_to_local[src]}")
+            else:
+                # Try to normalize the URL and match
+                if base_url:
+                    normalized_src = self._normalize_url(src, base_url)
+                    if normalized_src in url_to_local:
+                        # Add data-original-src attribute
+                        img["data-original-src"] = src
+                        # Replace with local path
+                        img["src"] = url_to_local[normalized_src]
+                        self.logger.debug(f"Modified img src: {src} (normalized: {normalized_src}) -> {url_to_local[normalized_src]}")
 
         return str(soup)
 
-    def modify_markdown(self, markdown: str, url_to_local: Dict[str, str]) -> str:
+    def modify_markdown(self, markdown: str, url_to_local: Dict[str, str], base_url: str = "") -> str:
         """Replace image URLs with local paths in Markdown"""
 
         # Match markdown image syntax: ![alt](url)
@@ -119,8 +155,17 @@ class ContentModifier:
         def replace_url(match):
             alt = match.group(1)
             url = match.group(2)
+
+            # Try direct match
             if url in url_to_local:
                 return f"![{alt}]({url_to_local[url]})"
+
+            # Try normalized match
+            if base_url:
+                normalized_url = self._normalize_url(url, base_url)
+                if normalized_url in url_to_local:
+                    return f"![{alt}]({url_to_local[normalized_url]})"
+
             return match.group(0)
 
         return re.sub(pattern, replace_url, markdown)
@@ -171,7 +216,7 @@ class ContentSaver:
         """Save content and return modified HTML or Markdown"""
         # Modify HTML to use local image paths
         modified_html = self.content_modifier.modify_html(
-            html_content, self.image_saver.url_to_local
+            html_content, self.image_saver.url_to_local, self.url
         )
 
         if self.format == "markdown":
@@ -179,7 +224,7 @@ class ContentSaver:
             from scrapling_fetch_mcp._fetcher import _html_to_markdown
             markdown_content = _html_to_markdown(modified_html)
             final_content = self.content_modifier.modify_markdown(
-                markdown_content, self.image_saver.url_to_local
+                markdown_content, self.image_saver.url_to_local, self.url
             )
 
             # Save as .md file
@@ -221,37 +266,52 @@ class ContentSaver:
         mapping_file.write_text(dumps(mapping, indent=2), encoding="utf-8")
 
     def create_page_action(self):
-        """Create page_action closure for scrapling image interception"""
+        """Create page_action closure for scrapling image interception
 
-        async def page_action(page):
-            """Setup route to intercept and save images"""
+        Returns a function that receives a route setup callable.
+        This is called BEFORE page navigation to set up context-level route interception.
+        """
+        async def page_action(setup_routes):
+            """Setup route to intercept and save images at context level"""
+            self.logger.info("Setting up context-level route interceptor")
 
             async def handle_route(route):
                 """Handle intercepted route requests"""
                 try:
-                    # Fetch the resource
-                    response = await route.fetch()
-                    content_type = response.headers.get("content-type", "")
+                    url = route.request.url
+                    resource_type = route.request.resource_type
+                    self.logger.debug(f"Route intercepted: {url} (type: {resource_type})")
 
                     # Only process images
-                    if "image" in content_type:
+                    if resource_type == "image":
+                        # Fetch the resource
+                        response = await route.fetch()
+                        content_type = response.headers.get("content-type", "")
+                        self.logger.debug(f"Response content-type: {content_type}")
+
                         body = await response.body()
-                        url = route.request.url
+                        self.logger.info(f"Saving image: {url} ({len(body)} bytes)")
 
                         # Save with deduplication
                         await self.image_saver.save_image(url, body, content_type)
 
-                    # Fulfill the request
-                    await route.fulfill(response=response)
+                        # Fulfill the request
+                        await route.fulfill(response=response)
+                    else:
+                        # Continue with non-image requests
+                        await route.continue_()
 
                 except Exception as e:
                     self.logger.warning(f"Failed to intercept image: {e}")
                     # Continue with original request
-                    await route.continue_()
+                    try:
+                        await route.continue_()
+                    except Exception:
+                        pass  # Ignore errors if context is already closed
 
-            # Register route for image types
-            await page.route(
-                "**/*.{png,jpg,jpeg,gif,svg,webp,ico,bmp}", handle_route
-            )
+            # Register route for image types at context level
+            # This happens BEFORE any page.goto(), so we intercept all requests
+            await setup_routes("**/*.{png,jpg,jpeg,gif,svg,webp,ico,bmp}", handle_route)
+            self.logger.info("Context-level route interceptor registered")
 
         return page_action
