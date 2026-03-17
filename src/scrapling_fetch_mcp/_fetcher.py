@@ -13,6 +13,35 @@ from scrapling_fetch_mcp._scrapling import browse_url
 from scrapling_fetch_mcp._content_saver import ContentSaver
 
 
+def _convert_with_markitdown(html: str) -> str:
+    """Convert HTML to Markdown using markitdown library"""
+    from markitdown import MarkItDown
+    import tempfile
+    import os
+
+    # Create temporary file with HTML content
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+        f.write(html)
+        temp_file = f.name
+
+    try:
+        converter = MarkItDown()
+        result = converter.convert(temp_file)
+        return result.text_content
+    finally:
+        # Clean up temporary file
+        os.unlink(temp_file)
+
+
+def _convert_with_markdownify(html: str) -> str:
+    """Convert HTML to Markdown using markdownify library"""
+    soup = BeautifulSoup(html, "lxml")
+    for script in soup(["script", "style"]):
+        script.extract()
+    body_elm = soup.find("body")
+    return _CustomMarkdownify().convert_soup(body_elm if body_elm else soup)
+
+
 def _html_to_markdown(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
     for script in soup(["script", "style"]):

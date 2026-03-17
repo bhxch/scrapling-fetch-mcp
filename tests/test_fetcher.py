@@ -4,6 +4,26 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
 
+def test_convert_with_markitdown(sample_html):
+    """Test HTML to Markdown conversion with markitdown"""
+    from scrapling_fetch_mcp._fetcher import _convert_with_markitdown
+
+    result = _convert_with_markitdown(sample_html)
+
+    assert "# Test Page" in result
+    assert "Some text content" in result
+
+
+def test_convert_with_markdownify(sample_html):
+    """Test HTML to Markdown conversion with markdownify"""
+    from scrapling_fetch_mcp._fetcher import _convert_with_markdownify
+
+    result = _convert_with_markdownify(sample_html)
+
+    assert "# Test Page" in result
+    assert "Some text content" in result
+
+
 @pytest.mark.asyncio
 async def test_fetch_page_impl_with_save_content(temp_dir):
     """Test fetch_page_impl with save_content enabled"""
