@@ -124,6 +124,13 @@ def run_server():
         "Default: .temp/scrapling/ "
         "Can also be set via SCRAPING_DIR environment variable.",
     )
+    parser.add_argument(
+        "--markdown-converter",
+        choices=["markitdown", "markdownify"],
+        default="markitdown",
+        help="Markdown converter library to use. Default: markitdown. "
+        "Can also be set via SCRAPLING_MARKDOWN_CONVERTER environment variable.",
+    )
     args = parser.parse_args()
 
     # Initialize from environment first
@@ -139,11 +146,15 @@ def run_server():
     if args.scraping_dir:
         config.set_scraping_dir(args.scraping_dir)
 
+    if args.markdown_converter:
+        config.set_markdown_converter(args.markdown_converter)
+
     # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
     logger.info(f"Minimum mode set to: {config.min_mode}")
     logger.info(f"Cache TTL set to: {config.cache_ttl} seconds")
     logger.info(f"Scraping directory set to: {config.scraping_dir}")
+    logger.info(f"Markdown converter set to: {config.markdown_converter}")
 
     mcp.run(transport="stdio")
 
