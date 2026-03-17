@@ -65,6 +65,7 @@ class Config:
     _cache_ttl: int = 300  # Default 5 minutes
     _cache: Optional[PageCache] = None
     _scraping_dir: Path = Path(".temp/scrapling/")
+    _markdown_converter: str = "markitdown"  # Default converter
 
     def __new__(cls):
         if cls._instance is None:
@@ -114,6 +115,20 @@ class Config:
         if isinstance(path, str):
             path = Path(path)
         self._scraping_dir = path
+
+    @property
+    def markdown_converter(self) -> str:
+        """Get the markdown converter library name"""
+        return self._markdown_converter
+
+    def set_markdown_converter(self, converter: str) -> None:
+        """Set the markdown converter from CLI or environment"""
+        valid_converters = ["markitdown", "markdownify"]
+        if converter not in valid_converters:
+            raise ValueError(
+                f"Invalid converter '{converter}'. Must be one of: {valid_converters}"
+            )
+        self._markdown_converter = converter
 
     def get_effective_mode(self, requested_mode: str) -> str:
         """
