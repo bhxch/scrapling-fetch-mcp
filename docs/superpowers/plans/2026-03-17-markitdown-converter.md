@@ -31,21 +31,28 @@
 ### Task 1: Add markdown_converter to Config class
 
 **Files:**
-- Modify: `src/scrapling_fetch_mcp/_config.py:60-75`
-- Test: `tests/test_config.py`
+- Modify: `src/scrapling_fetch_mcp/_config.py:94-117` (insert after scraping_dir property)
+- Test: `tests/test_config.py` (add to TestConfig class)
 
-- [ ] **Step 1: Write failing test for markdown_converter property**
+- [ ] **Step 1: Write failing tests for markdown_converter property**
+
+Add these tests to the `TestConfig` class in `tests/test_config.py`:
 
 ```python
 # tests/test_config.py
+# Add these methods inside the existing TestConfig class (after test_set_scraping_dir_string)
 
     def test_default_markdown_converter(self):
         """Test default markdown converter"""
+        from scrapling_fetch_mcp._config import Config
         config = Config()
+        # Reset to default for test isolation
+        config._markdown_converter = "markitdown"
         assert config.markdown_converter == "markitdown"
 
     def test_set_markdown_converter(self):
         """Test setting markdown converter"""
+        from scrapling_fetch_mcp._config import Config
         config = Config()
         config.set_markdown_converter("markdownify")
 
@@ -53,32 +60,31 @@
 
     def test_set_invalid_markdown_converter(self):
         """Test setting invalid markdown converter raises error"""
+        from scrapling_fetch_mcp._config import Config
         config = Config()
-        with pytest.raises(ValueError, match="Invalid converter"):
+        with pytest.raises(ValueError, match="Invalid converter 'invalid_converter'"):
             config.set_markdown_converter("invalid_converter")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_config.py::TestConfig::test_default_markdown_converter -v`
-Expected: FAIL with "AttributeError: 'Config' object has no attribute 'markdown_converter'"
+Expected: FAIL with "AttributeError: property 'markdown_converter' not found" or similar
 
 - [ ] **Step 3: Add markdown_converter property and setter to Config class**
 
+Add the private class variable at line 68 (after `_scraping_dir`):
+
 ```python
-# src/scrapling_fetch_mcp/_config.py
+# src/scrapling_fetch_mcp/_config.py:68
 
-class Config:
-    """Global configuration singleton"""
-
-    _instance = None
-    _min_mode: str = "basic"
-    _cache_ttl: int = 300  # Default 5 minutes
-    _cache: Optional[PageCache] = None
-    _scraping_dir: Path = Path(".temp/scrapling/")
     _markdown_converter: str = "markitdown"  # Default converter
+```
 
-    # ... existing properties ...
+Add the property and setter after the `scraping_dir` property (after line 94):
+
+```python
+# src/scrapling_fetch_mcp/_config.py:95-117
 
     @property
     def markdown_converter(self) -> str:
@@ -98,7 +104,7 @@ class Config:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_config.py::TestConfig -v`
-Expected: PASS (all 6 tests including the 3 new ones)
+Expected: PASS (6 tests total: 3 existing + 3 new)
 
 - [ ] **Step 5: Commit configuration changes**
 
@@ -110,23 +116,27 @@ git commit -m "feat: add markdown_converter configuration property"
 ### Task 2: Add environment variable support
 
 **Files:**
-- Modify: `src/scrapling_fetch_mcp/_config.py:142-159`
-- Test: `tests/test_config.py`
+- Modify: `src/scrapling_fetch_mcp/_config.py:156-160` (extend init_config_from_env function)
+- Test: `tests/test_config.py` (add to TestConfig class)
 
 - [ ] **Step 1: Write failing test for environment variable loading**
 
+Add this test to the `TestConfig` class:
+
 ```python
 # tests/test_config.py
-import os
+# Add this method inside TestConfig class (after test_set_invalid_markdown_converter)
 
     def test_markdown_converter_from_env(self, monkeypatch):
         """Test loading markdown converter from environment variable"""
-        monkeypatch.setenv("SCRAPLING_MARKDOWN_CONVERTER", "markdownify")
+        from scrapling_fetch_mcp._config import init_config_from_env, Config
 
-        from scrapling_fetch_mcp._config import init_config_from_env, config
-
-        # Reset to default first
+        # Reset to default for test isolation
+        config = Config()
         config._markdown_converter = "markitdown"
+
+        # Set environment variable
+        monkeypatch.setenv("SCRAPLING_MARKDOWN_CONVERTER", "markdownify")
 
         init_config_from_env()
 
@@ -140,33 +150,19 @@ Expected: FAIL (env var not loaded yet)
 
 - [ ] **Step 3: Add environment variable loading to init_config_from_env**
 
+Extend the `init_config_from_env()` function by adding this code at the end (after the scraping_dir loading):
+
 ```python
-# src/scrapling_fetch_mcp/_config.py
-
-def init_config_from_env() -> None:
-    """Initialize configuration from environment variables"""
-    env_min_mode = getenv("SCRAPLING_MIN_MODE", "").lower()
-    if env_min_mode and env_min_mode in MODE_LEVELS:
-        config.set_min_mode(env_min_mode)
-
-    env_cache_ttl = getenv("SCRAPLING_CACHE_TTL", "")
-    if env_cache_ttl:
-        try:
-            ttl = int(env_cache_ttl)
-            config.set_cache_ttl(ttl)
-        except ValueError:
-            pass  # Invalid value, use default
-
-    # Load scraping_dir from environment
-    env_scraping_dir = getenv("SCRAPING_DIR", "")
-    if env_scraping_dir:
-        config.set_scraping_dir(env_scraping_dir)
+# src/scrapling_fetch_mcp/_config.py:157-160
+# Add these lines at the end of init_config_from_env function
 
     # Load markdown_converter from environment
     env_markdown_converter = getenv("SCRAPLING_MARKDOWN_CONVERTER", "").lower()
     if env_markdown_converter:
         config.set_markdown_converter(env_markdown_converter)
 ```
+
+Note: `getenv` is already imported at line 3, no new imports needed.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -177,7 +173,7 @@ Expected: PASS
 
 ```bash
 git add src/scrapling_fetch_mcp/_config.py tests/test_config.py
-git commit -m "feat: add environment variable support for markdown_converter"
+git commit -m "feat: add environment variable SCRAPLING_MARKDOWN_CONVERTER support"
 ```
 
 ---
