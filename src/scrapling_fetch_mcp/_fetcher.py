@@ -1,3 +1,5 @@
+import os
+import tempfile
 from functools import reduce
 from json import dumps
 from re import compile
@@ -6,6 +8,7 @@ from typing import Optional
 from pathlib import Path
 
 from bs4 import BeautifulSoup
+from markitdown import MarkItDown
 
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
@@ -14,11 +17,11 @@ from scrapling_fetch_mcp._content_saver import ContentSaver
 
 
 def _convert_with_markitdown(html: str) -> str:
-    """Convert HTML to Markdown using markitdown library"""
-    from markitdown import MarkItDown
-    import tempfile
-    import os
+    """Convert HTML to Markdown using markitdown library
 
+    Note: MarkItDown requires a file path (not HTML string), so we create
+    a temporary file for conversion and clean it up afterward to avoid resource leaks.
+    """
     # Create temporary file with HTML content
     with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
         f.write(html)
