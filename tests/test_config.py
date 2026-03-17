@@ -29,7 +29,6 @@ class TestConfig:
 
     def test_default_markdown_converter(self):
         """Test default markdown converter"""
-        from scrapling_fetch_mcp._config import Config
         config = Config()
         # Reset to default for test isolation
         config._markdown_converter = "markitdown"
@@ -37,7 +36,6 @@ class TestConfig:
 
     def test_set_markdown_converter(self):
         """Test setting markdown converter"""
-        from scrapling_fetch_mcp._config import Config
         config = Config()
         config.set_markdown_converter("markdownify")
 
@@ -45,7 +43,6 @@ class TestConfig:
 
     def test_set_invalid_markdown_converter(self):
         """Test setting invalid markdown converter raises error"""
-        from scrapling_fetch_mcp._config import Config
         config = Config()
         with pytest.raises(ValueError, match="Invalid converter 'invalid_converter'"):
             config.set_markdown_converter("invalid_converter")
