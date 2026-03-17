@@ -26,6 +26,8 @@ async def s_fetch_page(
 ) -> str:
     """Fetches a complete web page with pagination support. Retrieves content from websites with bot-detection avoidance. Content is returned as 'METADATA: {json}\\n\\n[content]' where metadata includes length information and truncation status.
 
+    IMPORTANT: Use format='markdown' (default) for reading or extracting content. Only use format='html' when you specifically need the raw HTML structure.
+
     The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
 
     Pages are cached for the configured TTL (--cache-ttl, default 300 seconds) to avoid repeated requests when fetching large pages in segments using start_index parameter.
@@ -33,7 +35,7 @@ async def s_fetch_page(
     Args:
         url: URL to fetch
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (html or markdown)
+        format: Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis.
         max_length: Maximum number of characters to return.
         start_index: On return output starting at this character index, useful if a previous fetch was truncated and more content is required.
         save_content: If True, save complete page content (HTML/Markdown + images) to local filesystem for offline viewing.
@@ -70,6 +72,8 @@ async def s_fetch_pattern(
 ) -> str:
     """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
 
+    IMPORTANT: Use format='markdown' (default) for reading or extracting content. Only use format='html' when you specifically need the raw HTML structure.
+
     The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
 
     Pages are cached for the configured TTL (--cache-ttl, default 300 seconds) to avoid repeated requests when searching the same page with different patterns.
@@ -78,7 +82,7 @@ async def s_fetch_pattern(
         url: URL to fetch
         search_pattern: Regular expression pattern to search for in the content
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (html or markdown)
+        format: Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis.
         max_length: Maximum number of characters to return.
         context_chars: Number of characters to include before and after each match
     """
