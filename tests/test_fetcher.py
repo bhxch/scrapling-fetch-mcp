@@ -24,6 +24,52 @@ def test_convert_with_markdownify(sample_html):
     assert "Some text content" in result
 
 
+def test_html_to_markdown_with_markitdown(sample_html, monkeypatch):
+    """Test _html_to_markdown uses markitdown when configured"""
+    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+    from scrapling_fetch_mcp._config import config
+
+    # Configure to use markitdown
+    config.set_markdown_converter("markitdown")
+
+    result = _html_to_markdown(sample_html)
+
+    assert "# Test Page" in result
+    assert "Some text content" in result
+
+
+def test_html_to_markdown_with_markdownify(sample_html, monkeypatch):
+    """Test _html_to_markdown uses markdownify when configured"""
+    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+    from scrapling_fetch_mcp._config import config
+
+    # Configure to use markdownify
+    config.set_markdown_converter("markdownify")
+
+    result = _html_to_markdown(sample_html)
+
+    assert "# Test Page" in result
+    assert "Some text content" in result
+
+
+def test_html_to_markdown_with_explicit_converter(sample_html):
+    """Test _html_to_markdown with explicit converter parameter"""
+    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+
+    result = _html_to_markdown(sample_html, converter="markdownify")
+
+    assert "# Test Page" in result
+    assert "Some text content" in result
+
+
+def test_html_to_markdown_invalid_converter(sample_html):
+    """Test _html_to_markdown raises error for invalid converter"""
+    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+
+    with pytest.raises(ValueError, match="Unknown converter"):
+        _html_to_markdown(sample_html, converter="invalid")
+
+
 @pytest.mark.asyncio
 async def test_fetch_page_impl_with_save_content(temp_dir):
     """Test fetch_page_impl with save_content enabled"""

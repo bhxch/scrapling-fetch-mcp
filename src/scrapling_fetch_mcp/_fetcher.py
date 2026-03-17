@@ -42,12 +42,27 @@ def _convert_with_markdownify(html: str) -> str:
     return _CustomMarkdownify().convert_soup(body_elm if body_elm else soup)
 
 
-def _html_to_markdown(html: str) -> str:
-    soup = BeautifulSoup(html, "lxml")
-    for script in soup(["script", "style"]):
-        script.extract()
-    body_elm = soup.find("body")
-    return _CustomMarkdownify().convert_soup(body_elm if body_elm else soup)
+def _html_to_markdown(html: str, converter: Optional[str] = None) -> str:
+    """
+    Convert HTML to Markdown using configured converter.
+
+    Args:
+        html: HTML content to convert
+        converter: Converter to use ('markitdown' or 'markdownify').
+                   If None, uses configured default.
+
+    Returns:
+        Markdown formatted string
+    """
+    if converter is None:
+        converter = config.markdown_converter
+
+    if converter == "markitdown":
+        return _convert_with_markitdown(html)
+    elif converter == "markdownify":
+        return _convert_with_markdownify(html)
+    else:
+        raise ValueError(f"Unknown converter: {converter}")
 
 
 def _search_content(
