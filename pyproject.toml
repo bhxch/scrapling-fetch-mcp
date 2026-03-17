@@ -19,6 +19,7 @@ dependencies = [
     "curl-cffi>=0.13.0",
     "lxml>=6.0.2",
     "markdownify>=1.2.0",
+    "markitdown>=0.1.0",  # NEW - HTML to Markdown converter (0.1.0+ for stable API)
     "mcp>=1.15.0",
     "msgspec>=0.19.0",
     "packaging>=24.1, <25.0",
