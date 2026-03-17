@@ -172,3 +172,8 @@ def init_config_from_env() -> None:
     env_scraping_dir = getenv("SCRAPING_DIR", "")
     if env_scraping_dir:
         config.set_scraping_dir(env_scraping_dir)
+
+    # Load markdown_converter from environment
+    env_markdown_converter = getenv("SCRAPLING_MARKDOWN_CONVERTER", "").lower()
+    if env_markdown_converter:
+        config.set_markdown_converter(env_markdown_converter)

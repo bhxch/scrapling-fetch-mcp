@@ -46,3 +46,18 @@ class TestConfig:
         config = Config()
         with pytest.raises(ValueError, match="Invalid converter 'invalid_converter'"):
             config.set_markdown_converter("invalid_converter")
+
+    def test_markdown_converter_from_env(self, monkeypatch):
+        """Test loading markdown converter from environment variable"""
+        from scrapling_fetch_mcp._config import init_config_from_env, Config
+
+        # Reset to default for test isolation
+        config = Config()
+        config._markdown_converter = "markitdown"
+
+        # Set environment variable
+        monkeypatch.setenv("SCRAPLING_MARKDOWN_CONVERTER", "markdownify")
+
+        init_config_from_env()
+
+        assert config.markdown_converter == "markdownify"
