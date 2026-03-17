@@ -61,7 +61,7 @@ class Config:
     """Global configuration singleton"""
 
     _instance = None
-    _min_mode: str = "basic"
+    _min_mode: str = "stealth"
     _cache_ttl: int = 300  # Default 5 minutes
     _cache: Optional[PageCache] = None
     _scraping_dir: Path = Path(".temp/scrapling/")

@@ -19,7 +19,7 @@ async def s_fetch_page(
     url: str,
     mode: str = "basic",
     format: str = "markdown",
-    max_length: int = 5000,
+    max_length: int = 8000,
     start_index: int = 0,
     save_content: bool = False,
     scraping_dir: str = ".temp/scrapling/",
@@ -65,7 +65,7 @@ async def s_fetch_pattern(
     search_pattern: str,
     mode: str = "basic",
     format: str = "markdown",
-    max_length: int = 5000,
+    max_length: int = 8000,
     context_chars: int = 200,
 ) -> str:
     """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
