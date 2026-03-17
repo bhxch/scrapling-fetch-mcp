@@ -165,6 +165,44 @@ Or using environment variables:
 - Set to 0 to disable caching
 - Cache is URL + mode specific (same URL with different modes are cached separately)
 
+## Markdown Converter Configuration
+
+Choose which library to use for HTML to Markdown conversion:
+
+- **markitdown** (default): Microsoft's MarkItDown library - optimized for document conversion
+- **markdownify**: Custom markdownify-based converter - existing implementation
+
+### Using Command Line Arguments
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--markdown-converter", "markitdown"]
+    }
+  }
+}
+```
+
+### Using Environment Variables
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_MARKDOWN_CONVERTER": "markitdown"
+      }
+    }
+  }
+}
+```
+
+**Default**: `markitdown`
+
 ## Content Saving Feature
 
 Save complete web pages (HTML/Markdown + images) to your local filesystem for offline viewing.
