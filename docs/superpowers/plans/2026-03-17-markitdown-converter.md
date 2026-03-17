@@ -188,7 +188,7 @@ git commit -m "feat: add environment variable SCRAPLING_MARKDOWN_CONVERTER suppo
 - [ ] **Step 1: Add markitdown to dependencies**
 
 ```python
-# pyproject.toml
+# pyproject.toml:21 (insert after markdownify dependency line)
 
 dependencies = [
     "beautifulsoup4>=4.14.2",
@@ -197,7 +197,7 @@ dependencies = [
     "curl-cffi>=0.13.0",
     "lxml>=6.0.2",
     "markdownify>=1.2.0",
-    "markitdown>=0.0.1",  # NEW - HTML to Markdown converter
+    "markitdown>=0.1.0",  # NEW - HTML to Markdown converter (0.1.0+ for stable API)
     "mcp>=1.15.0",
     "msgspec>=0.19.0",
     "packaging>=24.1, <25.0",
@@ -210,25 +210,30 @@ dependencies = [
 - [ ] **Step 2: Install the dependency**
 
 Run: `uv sync`
-Expected: Successfully installs markitdown package
+Expected: Successfully installs markitdown package with version >= 0.1.0
 
 - [ ] **Step 3: Verify markitdown is installed**
 
 Run: `uv pip list | grep markitdown`
-Expected: Shows markitdown with version >= 0.0.1
+Expected: Shows markitdown with version >= 0.1.0
 
 - [ ] **Step 4: Commit dependency addition**
 
 ```bash
 git add pyproject.toml uv.lock
-git commit -m "feat: add markitdown>=0.0.1 as required dependency"
+git commit -m "feat: add markitdown>=0.1.0 as required dependency"
 ```
 
 ### Task 4: Implement converter functions
 
+**Context:** This task involves refactoring the existing `_html_to_markdown` function. The current implementation (lines 16-21) contains inline markdownify logic. We will:
+1. Extract that logic into `_convert_with_markdownify` function
+2. Add a new `_convert_with_markitdown` function
+3. Later (Task 5) replace `_html_to_markdown` with a dispatcher
+
 **Files:**
-- Modify: `src/scrapling_fetch_mcp/_fetcher.py:16-21`
-- Test: `tests/test_fetcher.py`
+- Modify: `src/scrapling_fetch_mcp/_fetcher.py:16-21` (add functions before _html_to_markdown)
+- Test: `tests/test_fetcher.py` (add new tests)
 
 - [ ] **Step 1: Write failing test for markitdown converter**
 
@@ -252,8 +257,10 @@ Expected: FAIL with "ImportError: cannot import name '_convert_with_markitdown'"
 
 - [ ] **Step 3: Implement _convert_with_markitdown function**
 
+Add this function at line 16 (before the existing `_html_to_markdown` function):
+
 ```python
-# src/scrapling_fetch_mcp/_fetcher.py
+# src/scrapling_fetch_mcp/_fetcher.py:16-24
 
 def _convert_with_markitdown(html: str) -> str:
     """Convert HTML to Markdown using markitdown library"""
@@ -269,7 +276,7 @@ def _convert_with_markitdown(html: str) -> str:
 Run: `pytest tests/test_fetcher.py::test_convert_with_markitdown -v`
 Expected: PASS
 
-- [ ] **Step 5: Write test for markdownify converter (refactor existing)**
+- [ ] **Step 5: Write test for markdownify converter**
 
 ```python
 # tests/test_fetcher.py
@@ -284,10 +291,19 @@ def test_convert_with_markdownify(sample_html):
     assert "Some text content" in result
 ```
 
-- [ ] **Step 6: Implement _convert_with_markdownify function (extract existing logic)**
+- [ ] **Step 6: Run test to verify it fails (function doesn't exist yet)**
+
+Run: `pytest tests/test_fetcher.py::test_convert_with_markdownify -v`
+Expected: FAIL with "ImportError: cannot import name '_convert_with_markdownify'"
+
+- [ ] **Step 7: Implement _convert_with_markdownify function**
+
+Extract the existing logic from `_html_to_markdown` (currently at lines 26-31 after adding _convert_with_markitdown):
+
+Add this function after `_convert_with_markitdown` (around line 26):
 
 ```python
-# src/scrapling_fetch_mcp/_fetcher.py
+# src/scrapling_fetch_mcp/_fetcher.py:26-33
 
 def _convert_with_markdownify(html: str) -> str:
     """Convert HTML to Markdown using markdownify library"""
@@ -298,12 +314,14 @@ def _convert_with_markdownify(html: str) -> str:
     return _CustomMarkdownify().convert_soup(body_elm if body_elm else soup)
 ```
 
-- [ ] **Step 7: Run test to verify it passes**
+Note: This is the same logic currently in `_html_to_markdown` - we're extracting it into a separate function.
+
+- [ ] **Step 8: Run test to verify it passes**
 
 Run: `pytest tests/test_fetcher.py::test_convert_with_markdownify -v`
 Expected: PASS
 
-- [ ] **Step 8: Commit converter functions**
+- [ ] **Step 9: Commit converter functions**
 
 ```bash
 git add src/scrapling_fetch_mcp/_fetcher.py tests/test_fetcher.py
@@ -312,9 +330,11 @@ git commit -m "feat: add _convert_with_markitdown and _convert_with_markdownify 
 
 ### Task 5: Implement converter selection in _html_to_markdown
 
+**Context:** Now we replace the existing `_html_to_markdown` implementation with a dispatcher that selects between the two converter functions created in Task 4.
+
 **Files:**
-- Modify: `src/scrapling_fetch_mcp/_fetcher.py:16-21`
-- Test: `tests/test_fetcher.py`
+- Modify: `src/scrapling_fetch_mcp/_fetcher.py:34-39` (replace existing _html_to_markdown function)
+- Test: `tests/test_fetcher.py` (add converter selection tests)
 
 - [ ] **Step 1: Write failing tests for converter selection**
 
@@ -369,10 +389,12 @@ def test_html_to_markdown_invalid_converter(sample_html):
 Run: `pytest tests/test_fetcher.py::test_html_to_markdown_with_markitdown -v`
 Expected: FAIL (function signature doesn't support converter parameter yet)
 
-- [ ] **Step 3: Modify _html_to_markdown to support converter selection**
+- [ ] **Step 3: Replace _html_to_markdown implementation with dispatcher**
+
+Replace the existing `_html_to_markdown` function (now at lines 34-39 after adding converter functions) with this new implementation:
 
 ```python
-# src/scrapling_fetch_mcp/_fetcher.py
+# src/scrapling_fetch_mcp/_fetcher.py:34-53
 
 def _html_to_markdown(html: str, converter: Optional[str] = None) -> str:
     """
@@ -397,17 +419,13 @@ def _html_to_markdown(html: str, converter: Optional[str] = None) -> str:
         raise ValueError(f"Unknown converter: {converter}")
 ```
 
-Add import for Optional at top of file:
-
-```python
-# src/scrapling_fetch_mcp/_fetcher.py
-from typing import Optional
-```
+Note: The `Optional` import already exists at line 5 - no new import needed.
+Note: The `config` import already exists at line 10 - no new import needed.
 
 - [ ] **Step 4: Run all new tests to verify they pass**
 
-Run: `pytest tests/test_fetcher.py::test_html_to_markdown -v`
-Expected: PASS (all 4 tests)
+Run: `pytest tests/test_fetcher.py -k "test_html_to_markdown" -v`
+Expected: PASS (all 4 tests: test_html_to_markdown_with_markitdown, test_html_to_markdown_with_markdownify, test_html_to_markdown_with_explicit_converter, test_html_to_markdown_invalid_converter)
 
 - [ ] **Step 5: Run existing tests to ensure no regression**
 
