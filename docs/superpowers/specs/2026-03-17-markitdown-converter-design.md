@@ -44,7 +44,7 @@ Add markitdown as a required dependency alongside the existing markdownify depen
 dependencies = [
     # ... existing dependencies ...
     "markdownify>=1.2.0",
-    "markitdown",  # NEW
+    "markitdown>=0.0.1",  # NEW - pin to minimum version for stability
     # ... other dependencies ...
 ]
 ```
@@ -122,7 +122,7 @@ def _convert_with_markitdown(html: str) -> str:
 
     converter = MarkItDown()
     result = converter.convert(html)
-    return result.text_content
+    return result.text_content  # NOTE: Verify this attribute name during implementation
 
 
 def _convert_with_markdownify(html: str) -> str:
@@ -166,7 +166,7 @@ def _html_to_markdown(html: str, converter: Optional[str] = None) -> str:
 
 **File**: `README.md`
 
-Add new section after "Content Saving Feature":
+Add new section after "Page Caching":
 
 ```markdown
 ## Markdown Converter Configuration
