@@ -446,43 +446,15 @@ git commit -m "feat: add converter selection to _html_to_markdown function"
 ### Task 6: Add CLI argument and logging
 
 **Files:**
-- Modify: `src/scrapling_fetch_mcp/mcp.py:99-148`
+- Modify: `src/scrapling_fetch_mcp/mcp.py:97-153`
 
 - [ ] **Step 1: Add --markdown-converter CLI argument**
 
-```python
-# src/scrapling_fetch_mcp/mcp.py
+Insert the new argument definition after the `--scraping-dir` argument (after line 126):
 
-def run_server():
-    """Parse CLI arguments and start the MCP server"""
-    parser = ArgumentParser(
-        description="Scrapling Fetch MCP Server - Fetch web content with bot-detection avoidance"
-    )
-    parser.add_argument(
-        "--min-mode",
-        choices=["basic", "stealth", "max-stealth"],
-        help="Minimum fetching mode level. All requests will use at least this mode, "
-        "preventing multiple retries from basic to higher modes. "
-        "Can also be set via SCRAPLING_MIN_MODE environment variable.",
-    )
-    parser.add_argument(
-        "--cache-ttl",
-        type=int,
-        default=300,
-        help="Cache time-to-live in seconds for fetched pages. "
-        "When fetching large pages in segments, this prevents repeated requests to the same URL. "
-        "Set to 0 to disable caching. Default: 300 (5 minutes). "
-        "Can also be set via SCRAPLING_CACHE_TTL environment variable.",
-    )
-    parser.add_argument(
-        "--scraping-dir",
-        type=str,
-        default=".temp/scrapling/",
-        help="Default directory for saving scraped content (HTML + images). "
-        "Can be overridden per-request with scraping_dir parameter. "
-        "Default: .temp/scrapling/ "
-        "Can also be set via SCRAPING_DIR environment variable.",
-    )
+```python
+# src/scrapling_fetch_mcp/mcp.py:127-133
+
     parser.add_argument(
         "--markdown-converter",
         choices=["markitdown", "markdownify"],
@@ -490,45 +462,28 @@ def run_server():
         help="Markdown converter library to use. Default: markitdown. "
         "Can also be set via SCRAPLING_MARKDOWN_CONVERTER environment variable.",
     )
-    args = parser.parse_args()
+```
 
-    # Initialize from environment first
-    init_config_from_env()
+- [ ] **Step 2: Add CLI override for markdown_converter**
 
-    # CLI args override environment variables
-    if args.min_mode:
-        config.set_min_mode(args.min_mode)
+Add conditional check after the scraping_dir check (after line 140):
 
-    if args.cache_ttl is not None:
-        config.set_cache_ttl(args.cache_ttl)
-
-    if args.scraping_dir:
-        config.set_scraping_dir(args.scraping_dir)
+```python
+# src/scrapling_fetch_mcp/mcp.py:141-142
 
     if args.markdown_converter:
         config.set_markdown_converter(args.markdown_converter)
-
-    # Log the configuration
-    logger = getLogger("scrapling_fetch_mcp")
-    logger.info(f"Minimum mode set to: {config.min_mode}")
-    logger.info(f"Cache TTL set to: {config.cache_ttl} seconds")
-    logger.info(f"Scraping directory set to: {config.scraping_dir}")
-    logger.info(f"Markdown converter set to: {config.markdown_converter}")
-
-    mcp.run(transport="stdio")
 ```
 
-- [ ] **Step 2: Verify CLI help shows new argument**
+- [ ] **Step 3: Add logging for markdown_converter**
 
-Run: `uvx --from scrapling-fetch-mcp scrapling-fetch-mcp --help`
-Expected: Shows `--markdown-converter` in help text with description
+Add logging line after the scraping_dir log (after line 146):
 
-- [ ] **Step 3: Test CLI argument works**
+```python
+# src/scrapling_fetch_mcp/mcp.py:147
 
-Run: `SCRAPLING_MARKDOWN_CONVERTER=markdownify uvx --from scrapling-fetch-mcp scrapling-fetch-mcp --markdown-converter markitdown &`
-Expected: Server starts with markdown converter set to markitdown (CLI overrides env)
-
-Kill the server: `pkill -f scrapling-fetch-mcp`
+    logger.info(f"Markdown converter set to: {config.markdown_converter}")
+```
 
 - [ ] **Step 4: Commit CLI integration**
 
@@ -537,6 +492,11 @@ git add src/scrapling_fetch_mcp/mcp.py
 git commit -m "feat: add --markdown-converter CLI argument"
 ```
 
+- [ ] **Step 5: Verify help text includes new argument**
+
+Run: `python -m scrapling_fetch_mcp.mcp --help`
+Expected: Shows `--markdown-converter` in help text with choices [markitdown, markdownify] and default "markitdown"
+
 ---
 
 ## Chunk 4: Documentation
@@ -544,11 +504,11 @@ git commit -m "feat: add --markdown-converter CLI argument"
 ### Task 7: Update README with markdown converter configuration
 
 **Files:**
-- Modify: `README.md`
+- Modify: `README.md:167-168` (insert new section between Page Caching and Content Saving Feature)
 
-- [ ] **Step 1: Add Markdown Converter Configuration section after Page Caching**
+- [ ] **Step 1: Add Markdown Converter Configuration section**
 
-Find the line number after "Page Caching" section ends (around line 166), then add:
+First, verify the README structure by checking line 167 ends with the Page Caching section:
 
 ```markdown
 ## Markdown Converter Configuration
@@ -594,8 +554,13 @@ Insert this section after "Page Caching" section and before "Content Saving Feat
 
 - [ ] **Step 2: Verify README formatting**
 
-Run: `cat README.md | grep -A 30 "## Markdown Converter"`
-Expected: Shows the new section with proper formatting
+Run: `head -167 README.md | tail -5`
+Expected: Shows the end of Page Caching section (ends with "```\n\n")
+
+Then insert the new section at line 168 (before the Content Saving Feature section):
+
+```markdown
+## Markdown Converter Configuration
 
 - [ ] **Step 3: Commit documentation updates**
 
@@ -631,46 +596,63 @@ from scrapling_fetch_mcp._fetcher import fetch_page_impl
 from scrapling_fetch_mcp._config import config
 
 async def test_both_converters():
-    # Test with markitdown
-    config.set_markdown_converter("markitdown")
-    result1 = await fetch_page_impl(
-        url="https://example.com",
-        mode="basic",
-        format="markdown",
-        max_length=1000,
-        start_index=0,
-        save_content=False,
-        scraping_dir=None
-    )
-    print("markitdown result:", result1[:200])
+    try:
+        # Test with markitdown
+        config.set_markdown_converter("markitdown")
+        result1 = await fetch_page_impl(
+            url="https://example.com",
+            mode="basic",
+            format="markdown",
+            max_length=1000,
+            start_index=0,
+            save_content=False,
+            scraping_dir=None
+        )
+        print("markitdown result:", result1[:200])
+        assert "METADATA:" in result1, "markitdown result missing METADATA"
+        assert "Example Domain" in result1 or "example" in result1.lower(), "markitdown result missing expected content"
 
-    # Test with markdownify
-    config.set_markdown_converter("markdownify")
-    result2 = await fetch_page_impl(
-        url="https://example.com",
-        mode="basic",
-        format="markdown",
-        max_length=1000,
-        start_index=0,
-        save_content=False,
-        scraping_dir=None
-    )
-    print("markdownify result:", result2[:200])
+        # Test with markdownify
+        config.set_markdown_converter("markdownify")
+        result2 = await fetch_page_impl(
+            url="https://example.com",
+            mode="basic",
+            format="markdown",
+            max_length=1000,
+            start_index=0,
+            save_content=False,
+            scraping_dir=None
+        )
+        print("markdownify result:", result2[:200])
+        assert "METADATA:" in result2, "markdownify result missing METADATA"
+        assert "Example Domain" in result2 or "example" in result2.lower(), "markdownify result missing expected content"
+
+        print("\n✅ Both converters produce valid markdown output")
+    except Exception as e:
+        print(f"\n❌ Error during conversion: {e}")
+        raise
 
 asyncio.run(test_both_converters())
 ```
 
 Run: `python test_manual.py`
-Expected: Both converters produce valid markdown output
+Expected: Both converters produce valid markdown output with assertions passing
 
 Clean up: `rm test_manual.py`
 
 ### Task 9: Final commit and summary
 
-- [ ] **Step 1: Create summary of changes**
+- [ ] **Step 1: Verify all required commits are present**
 
 Run: `git log --oneline --decorate | head -10`
-Expected: Shows all the commits made during implementation
+Expected: Shows these commit messages in recent history:
+  - "feat: add markdown_converter configuration property"
+  - "feat: add environment variable SCRAPLING_MARKDOWN_CONVERTER support"
+  - "feat: add markitdown>=0.1.0 as required dependency"
+  - "feat: add _convert_with_markitdown and _convert_with_markdownify functions"
+  - "feat: add converter selection to _html_to_markdown function"
+  - "feat: add --markdown-converter CLI argument"
+  - "docs: add markdown converter configuration documentation"
 
 - [ ] **Step 2: Review all changed files**
 
@@ -680,14 +662,14 @@ Expected: Shows all modified files with line counts
 - [ ] **Step 3: Final verification of spec requirements**
 
 Check that all requirements from spec are met:
-- [x] markitdown added as dependency
-- [x] Configuration system supports markdown_converter
-- [x] Environment variable SCRAPLING_MARKDOWN_CONVERTER works
-- [x] CLI argument --markdown-converter works
-- [x] Both markitdown and markdownify converters implemented
-- [x] Converter selection in _html_to_markdown works
-- [x] Tests cover all functionality
-- [x] Documentation updated
+- [ ] markitdown added as dependency
+- [ ] Configuration system supports markdown_converter
+- [ ] Environment variable SCRAPLING_MARKDOWN_CONVERTER works
+- [ ] CLI argument --markdown-converter works
+- [ ] Both markitdown and markdownify converters implemented
+- [ ] Converter selection in _html_to_markdown works
+- [ ] Tests cover all functionality
+- [ ] Documentation updated
 
 ---
 
