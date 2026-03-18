@@ -66,6 +66,7 @@ class Config:
     _cache: Optional[PageCache] = None
     _scraping_dir: Path = Path(".temp/scrapling/")
     _markdown_converter: str = "markitdown"  # Default converter
+    _rules_config_path: Optional[Path] = None  # airead 规则配置路径
 
     def __new__(cls):
         if cls._instance is None:
@@ -130,6 +131,20 @@ class Config:
             )
         self._markdown_converter = converter
 
+    @property
+    def rules_config_path(self) -> Optional[Path]:
+        """Get the airead rules configuration file path"""
+        return self._rules_config_path
+
+    def set_rules_config_path(self, path: Path | str | None) -> None:
+        """Set the airead rules configuration file path"""
+        if path is None:
+            self._rules_config_path = None
+        elif isinstance(path, str):
+            self._rules_config_path = Path(path)
+        else:
+            self._rules_config_path = path
+
     def get_effective_mode(self, requested_mode: str) -> str:
         """
         Get the effective mode by comparing requested mode with minimum mode.
@@ -177,3 +192,8 @@ def init_config_from_env() -> None:
     env_markdown_converter = getenv("SCRAPLING_MARKDOWN_CONVERTER", "").lower()
     if env_markdown_converter:
         config.set_markdown_converter(env_markdown_converter)
+
+    # Load rules_config_path from environment
+    env_rules_config = getenv("SCRAPLING_RULES_CONFIG", "")
+    if env_rules_config:
+        config.set_rules_config_path(env_rules_config)
