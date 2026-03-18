@@ -87,3 +87,23 @@ def test_trafilatura_strategy_removes_navigation():
 
     assert "Main Content" in result
     assert "Important text" in result
+
+
+# ReadabilityStrategy Tests
+from scrapling_fetch_mcp._extractor_strategy import ReadabilityStrategy
+
+def test_readability_strategy_basic():
+    """测试 Readability 基本提取"""
+    html = """
+    <html>
+        <body>
+            <h1>Article Title</h1>
+            <p>Article content here</p>
+        </body>
+    </html>
+    """
+    strategy = ReadabilityStrategy()
+    result = strategy.extract(html, "https://example.com")
+
+    assert isinstance(result, str)
+    assert len(result) > 0

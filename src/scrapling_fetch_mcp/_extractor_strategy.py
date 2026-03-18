@@ -1,6 +1,8 @@
 import re
 from abc import ABC, abstractmethod
 import trafilatura
+from readability import Document
+from bs4 import BeautifulSoup
 
 
 def count_effective_characters(text: str) -> int:
@@ -57,3 +59,18 @@ class TrafilaturaStrategy(ExtractorStrategy):
             output_format='markdown'
         )
         return result or ""
+
+
+class ReadabilityStrategy(ExtractorStrategy):
+    """使用 readability-lxml 提取内容"""
+
+    def extract(self, html: str, url: str) -> str:
+        doc = Document(html)
+        clean_html = doc.summary()
+
+        # 转换为 Markdown
+        soup = BeautifulSoup(clean_html, 'html.parser')
+
+        # 简单的 Markdown 转换(后续会使用统一的转换器)
+        text = soup.get_text(separator='\n')
+        return text.strip()
