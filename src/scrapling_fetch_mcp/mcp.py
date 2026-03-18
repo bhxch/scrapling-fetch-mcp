@@ -26,7 +26,12 @@ async def s_fetch_page(
 ) -> str:
     """Fetches a complete web page with pagination support. Retrieves content from websites with bot-detection avoidance. Content is returned as 'METADATA: {json}\\n\\n[content]' where metadata includes length information and truncation status.
 
-    IMPORTANT: Use format='markdown' (default) for reading or extracting content. Only use format='html' when you specifically need the raw HTML structure.
+    IMPORTANT:
+    - Use format='airead' for AI-optimized content extraction (removes navigation, ads, etc., 30-50% token reduction)
+    - Use format='markdown' for standard markdown conversion
+    - Use format='html' only when you need raw HTML structure
+
+    The airead format uses intelligent content extraction with URL-based routing to specialized strategies for different website types (search engines, documentation, developer platforms, etc.).
 
     The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
 
@@ -35,7 +40,7 @@ async def s_fetch_page(
     Args:
         url: URL to fetch
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis.
+        format: Output format (airead, markdown, or html). Use airead for AI-optimized extraction, markdown for standard conversion, html only for structure analysis.
         max_length: Maximum number of characters to return.
         start_index: On return output starting at this character index, useful if a previous fetch was truncated and more content is required.
         save_content: If True, save complete page content (HTML/Markdown + images) to local filesystem for offline viewing.
