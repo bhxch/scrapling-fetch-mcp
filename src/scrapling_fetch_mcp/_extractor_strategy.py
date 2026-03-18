@@ -304,24 +304,31 @@ class SearchEngineStrategy(ExtractorStrategy):
         提取snippet（摘要）
 
         策略：
-        1. 优先查找专门的snippet标签（DuckDuckGo使用<a class="result__snippet">）
+        1. 优先查找专门的snippet标签（Google: VwiC3b, DuckDuckGo: result__snippet）
         2. 如果没有，使用启发式方法从容器文本中提取
         """
-        # 1. 尝试查找专门的snippet标签（DuckDuckGo）
-        snippet_elem = container.find('a', class_='result__snippet')
+        # 1. 尝试查找Google的snippet class（VwiC3b）
+        snippet_elem = container.find(class_='VwiC3b')
         if snippet_elem:
-            # 获取文本，保留空格（使用separator=' '避免单词粘连）
             snippet = snippet_elem.get_text(separator=' ', strip=True)
-            # 清理多余空格
             snippet = ' '.join(snippet.split())
             if snippet:
                 return snippet[:400] + ('...' if len(snippet) > 400 else '')
 
-        # 2. 查找其他常见的snippet类名
+        # 2. 尝试查找DuckDuckGo的snippet标签
+        snippet_elem = container.find('a', class_='result__snippet')
+        if snippet_elem:
+            snippet = snippet_elem.get_text(separator=' ', strip=True)
+            snippet = ' '.join(snippet.split())
+            if snippet:
+                return snippet[:400] + ('...' if len(snippet) > 400 else '')
+
+        # 3. 查找其他常见的snippet类名
         for class_name in ['snippet', 'result-snippet', 'search-result__snippet']:
             snippet_elem = container.find(class_=class_name)
             if snippet_elem:
-                snippet = snippet_elem.get_text(strip=True)
+                snippet = snippet_elem.get_text(separator=' ', strip=True)
+                snippet = ' '.join(snippet.split())
                 if snippet:
                     return snippet[:400] + ('...' if len(snippet) > 400 else '')
 
