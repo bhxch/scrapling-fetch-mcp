@@ -1,5 +1,6 @@
 import re
 from abc import ABC, abstractmethod
+import trafilatura
 
 
 def count_effective_characters(text: str) -> int:
@@ -44,3 +45,15 @@ class ExtractorStrategy(ABC):
             提取并格式化后的 Markdown 文本
         """
         pass
+
+
+class TrafilaturaStrategy(ExtractorStrategy):
+    """使用 trafilatura 提取内容"""
+
+    def extract(self, html: str, url: str) -> str:
+        result = trafilatura.extract(
+            html,
+            include_formatting=True,
+            output_format='markdown'
+        )
+        return result or ""

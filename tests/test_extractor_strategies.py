@@ -47,3 +47,43 @@ def test_extractor_strategy_is_abstract():
     """测试策略基类是抽象的"""
     with pytest.raises(TypeError):
         ExtractorStrategy()
+
+
+# TrafilaturaStrategy Tests
+from scrapling_fetch_mcp._extractor_strategy import TrafilaturaStrategy
+
+def test_trafilatura_strategy_basic():
+    """测试 Trafilatura 基本提取"""
+    html = """
+    <html>
+        <body>
+            <h1>Title</h1>
+            <p>Content paragraph</p>
+        </body>
+    </html>
+    """
+    strategy = TrafilaturaStrategy()
+    result = strategy.extract(html, "https://example.com")
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "Title" in result or "Content" in result
+
+def test_trafilatura_strategy_removes_navigation():
+    """测试导航元素移除"""
+    html = """
+    <html>
+        <body>
+            <nav><a href="#">Nav Link</a></nav>
+            <main>
+                <h1>Main Content</h1>
+                <p>Important text</p>
+            </main>
+        </body>
+    </html>
+    """
+    strategy = TrafilaturaStrategy()
+    result = strategy.extract(html, "https://example.com")
+
+    assert "Main Content" in result
+    assert "Important text" in result
