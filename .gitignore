@@ -43,3 +43,6 @@ Thumbs.db
 .worktrees/
 
 .DS_Store
+
+.temp
+test_*
