@@ -14,6 +14,9 @@ from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
 from scrapling_fetch_mcp._scrapling import browse_url
 from scrapling_fetch_mcp._content_saver import ContentSaver
+from scrapling_fetch_mcp._url_matcher import URLMatcher
+from scrapling_fetch_mcp._strategy_factory import StrategyFactory
+from scrapling_fetch_mcp._markdown_postprocessor import postprocess_markdown
 
 
 def _convert_with_markitdown(html: str) -> str:
@@ -100,6 +103,36 @@ def _search_content(
         return f"ERROR: Invalid regex pattern: {str(e)}", 0
 
 
+def _extract_with_airead(html: str, url: str) -> str:
+    """
+    Extract content using airead format
+
+    Args:
+        html: Raw HTML content
+        url: Page URL (for strategy routing)
+
+    Returns:
+        Extracted and postprocessed Markdown content
+    """
+    # 1. Get configuration file path
+    rules_config_path = config.rules_config_path
+
+    # 2. URL matching
+    matcher = URLMatcher(rules_config_path)
+    strategy_name = matcher.match(url)
+
+    # 3. Get strategy instance
+    strategy = StrategyFactory.get_strategy(strategy_name, rules_config_path)
+
+    # 4. Execute extraction
+    markdown = strategy.extract(html, url)
+
+    # 5. Unified postprocessing
+    markdown = postprocess_markdown(markdown)
+
+    return markdown
+
+
 def _create_metadata(
     total_length: int,
     retrieved_length: int,
@@ -158,10 +191,13 @@ async def fetch_page_impl(
     if content_saver:
         html_content = await content_saver.save_content(html_content)
 
-    # Convert to markdown if needed
-    full_content = (
-        _html_to_markdown(html_content) if is_markdown else html_content
-    )
+    # Extract content based on format
+    if format == "airead":
+        full_content = _extract_with_airead(html_content, url)
+    elif is_markdown:
+        full_content = _html_to_markdown(html_content)
+    else:  # html
+        full_content = html_content
 
     total_length = len(full_content)
     truncated_content = full_content[start_index : start_index + max_length]

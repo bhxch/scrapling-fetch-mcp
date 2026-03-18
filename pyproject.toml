@@ -25,7 +25,10 @@ dependencies = [
     "packaging>=24.1, <25.0",
     "patchright>=1.58.0",
     "playwright>=1.55.0",
+    "pyyaml>=6.0",
+    "readability-lxml>=0.8.1",
     "scrapling>=0.3.6",
+    "trafilatura>=1.6.0",
 ]
 
 [project.urls]
