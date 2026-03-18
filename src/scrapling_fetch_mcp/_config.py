@@ -67,6 +67,7 @@ class Config:
     _scraping_dir: Path = Path(".temp/scrapling/")
     _markdown_converter: str = "markitdown"  # Default converter
     _rules_config_path: Optional[Path] = None  # airead 规则配置路径
+    _default_format: str = "markdown"  # 默认输出格式
 
     def __new__(cls):
         if cls._instance is None:
@@ -145,6 +146,18 @@ class Config:
         else:
             self._rules_config_path = path
 
+    @property
+    def default_format(self) -> str:
+        """Get the default format for fetch operations"""
+        return self._default_format
+
+    def set_default_format(self, format: str) -> None:
+        """Set the default format from CLI or environment"""
+        valid_formats = ["airead", "markdown", "html"]
+        if format not in valid_formats:
+            raise ValueError(f"Invalid format '{format}'. Must be one of: {valid_formats}")
+        self._default_format = format
+
     def get_effective_mode(self, requested_mode: str) -> str:
         """
         Get the effective mode by comparing requested mode with minimum mode.
@@ -197,3 +210,11 @@ def init_config_from_env() -> None:
     env_rules_config = getenv("SCRAPLING_RULES_CONFIG", "")
     if env_rules_config:
         config.set_rules_config_path(env_rules_config)
+
+    # Load default_format from environment
+    env_default_format = getenv("SCRAPLING_DEFAULT_FORMAT", "").lower()
+    if env_default_format:
+        try:
+            config.set_default_format(env_default_format)
+        except ValueError:
+            pass  # Invalid value, use default

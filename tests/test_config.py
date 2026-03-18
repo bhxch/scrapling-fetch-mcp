@@ -61,3 +61,56 @@ class TestConfig:
         init_config_from_env()
 
         assert config.markdown_converter == "markdownify"
+
+
+class TestDefaultFormat:
+    """Tests for default format configuration"""
+
+    def test_default_format_default(self):
+        """Test default format is markdown"""
+        config = Config()
+        config._default_format = "markdown"  # Reset for isolation
+        assert config.default_format == "markdown"
+
+    def test_set_default_format(self):
+        """Test setting valid format"""
+        config = Config()
+        config.set_default_format("airead")
+        assert config.default_format == "airead"
+
+    def test_set_default_format_html(self):
+        """Test setting html format"""
+        config = Config()
+        config.set_default_format("html")
+        assert config.default_format == "html"
+
+    def test_set_default_format_invalid(self):
+        """Test setting invalid format raises error"""
+        config = Config()
+        with pytest.raises(ValueError, match="Invalid format 'json'"):
+            config.set_default_format("json")
+
+    def test_default_format_from_env(self, monkeypatch):
+        """Test loading default format from environment variable"""
+        from scrapling_fetch_mcp._config import init_config_from_env, Config
+
+        config = Config()
+        config._default_format = "markdown"  # Reset
+
+        monkeypatch.setenv("SCRAPLING_DEFAULT_FORMAT", "html")
+        init_config_from_env()
+
+        assert config.default_format == "html"
+
+    def test_default_format_invalid_env_ignored(self, monkeypatch):
+        """Test that invalid environment variable is ignored"""
+        from scrapling_fetch_mcp._config import init_config_from_env, Config
+
+        config = Config()
+        config._default_format = "markdown"  # Reset
+
+        monkeypatch.setenv("SCRAPLING_DEFAULT_FORMAT", "invalid")
+        init_config_from_env()
+
+        # Should remain default
+        assert config.default_format == "markdown"

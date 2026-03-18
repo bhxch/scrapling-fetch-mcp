@@ -18,7 +18,7 @@ mcp = FastMCP("scrapling-fetch-mcp")
 async def s_fetch_page(
     url: str,
     mode: str = "basic",
-    format: str = "markdown",
+    format: str = None,
     max_length: int = 8000,
     start_index: int = 0,
     save_content: bool = False,
@@ -40,19 +40,21 @@ async def s_fetch_page(
     Args:
         url: URL to fetch
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (airead, markdown, or html). Use airead for AI-optimized extraction, markdown for standard conversion, html only for structure analysis.
+        format: Output format (airead, markdown, or html). Use airead for AI-optimized extraction, markdown for standard conversion, html only for structure analysis. Defaults to server's default format setting.
         max_length: Maximum number of characters to return.
         start_index: On return output starting at this character index, useful if a previous fetch was truncated and more content is required.
         save_content: If True, save complete page content (HTML/Markdown + images) to local filesystem for offline viewing.
         scraping_dir: Directory path for saved content (relative or absolute). Default: .temp/scrapling/
     """
     try:
+        # Use configured default format if not specified
+        effective_format = format if format is not None else config.default_format
         scraping_path = Path(scraping_dir)
 
         result = await fetch_page_impl(
             url,
             mode,
-            format,
+            effective_format,
             max_length,
             start_index,
             save_content=save_content,
@@ -71,7 +73,7 @@ async def s_fetch_pattern(
     url: str,
     search_pattern: str,
     mode: str = "basic",
-    format: str = "markdown",
+    format: str = None,
     max_length: int = 8000,
     context_chars: int = 200,
 ) -> str:
@@ -87,13 +89,19 @@ async def s_fetch_pattern(
         url: URL to fetch
         search_pattern: Regular expression pattern to search for in the content
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis.
+        format: Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis. Defaults to server's default format setting (airead will be converted to markdown).
         max_length: Maximum number of characters to return.
         context_chars: Number of characters to include before and after each match
     """
     try:
+        # Use configured default format if not specified
+        effective_format = format if format is not None else config.default_format
+        # s_fetch_pattern does not support airead, fallback to markdown
+        if effective_format == "airead":
+            effective_format = "markdown"
+
         result = await fetch_pattern_impl(
-            url, search_pattern, mode, format, max_length, context_chars
+            url, search_pattern, mode, effective_format, max_length, context_chars
         )
         return result
     except Exception as e:
@@ -148,6 +156,16 @@ def run_server():
         "Default: Use built-in rules. "
         "Can also be set via SCRAPLING_RULES_CONFIG environment variable.",
     )
+    parser.add_argument(
+        "--default-format",
+        choices=["airead", "markdown", "html"],
+        default="markdown",
+        help="Default output format for fetch operations. "
+        "s_fetch_page supports: airead, markdown, html. "
+        "s_fetch_pattern will use markdown if default is airead. "
+        "Default: markdown. "
+        "Can also be set via SCRAPLING_DEFAULT_FORMAT environment variable.",
+    )
     args = parser.parse_args()
 
 
@@ -170,12 +188,16 @@ def run_server():
     if args.rules_config:
         config.set_rules_config_path(args.rules_config)
 
+    if args.default_format:
+        config.set_default_format(args.default_format)
+
     # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
     logger.info(f"Minimum mode set to: {config.min_mode}")
     logger.info(f"Cache TTL set to: {config.cache_ttl} seconds")
     logger.info(f"Scraping directory set to: {config.scraping_dir}")
     logger.info(f"Markdown converter set to: {config.markdown_converter}")
+    logger.info(f"Default format set to: {config.default_format}")
 
     mcp.run(transport="stdio")
 
