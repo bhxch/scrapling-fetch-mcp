@@ -126,3 +126,27 @@ class DocumentationStrategy(ExtractorStrategy):
             output_format='markdown',
             favor_precision=True
         ) or ""
+
+
+class DualExtractorStrategy(ExtractorStrategy):
+    """三重提取器对比策略"""
+
+    def extract(self, html: str, url: str) -> str:
+        # 运行三个提取器
+        trafilatura_strategy = TrafilaturaStrategy()
+        readability_strategy = ReadabilityStrategy()
+        scrapling_strategy = ScraplingStrategy()
+
+        result_trafilatura = trafilatura_strategy.extract(html, url)
+        result_readability = readability_strategy.extract(html, url)
+        result_scrapling = scrapling_strategy.extract(html, url)
+
+        # 对比有效字数
+        results = [
+            (count_effective_characters(result_trafilatura), result_trafilatura),
+            (count_effective_characters(result_readability), result_readability),
+            (count_effective_characters(result_scrapling), result_scrapling)
+        ]
+
+        # 返回字数最多的结果
+        return max(results, key=lambda x: x[0])[1]

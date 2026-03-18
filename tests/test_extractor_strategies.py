@@ -178,3 +178,32 @@ def test_documentation_strategy_basic():
     result = strategy.extract(html, "https://docs.python.org/3/library/functions.html")
 
     assert isinstance(result, str)
+
+
+# DualExtractorStrategy Tests
+from scrapling_fetch_mcp._extractor_strategy import DualExtractorStrategy
+
+def test_dual_extractor_selects_best():
+    """测试 dual 策略选择最佳结果"""
+    html = """
+    <html>
+        <body>
+            <h1>Test</h1>
+            <p>Content with enough text to be detected</p>
+        </body>
+    </html>
+    """
+    strategy = DualExtractorStrategy()
+    result = strategy.extract(html, "https://example.com")
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+def test_dual_extractor_fallback():
+    """测试 dual 策略的降级处理"""
+    html = "<html><body></body></html>"
+    strategy = DualExtractorStrategy()
+    result = strategy.extract(html, "https://example.com")
+
+    # 应该返回某个提取器的结果(即使是空字符串)
+    assert isinstance(result, str)
