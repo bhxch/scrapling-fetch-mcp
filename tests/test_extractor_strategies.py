@@ -1,5 +1,5 @@
 import pytest
-from scrapling_fetch_mcp._extractor_strategy import count_effective_characters
+from scrapling_fetch_mcp._extractor_strategy import count_effective_characters, ExtractorStrategy
 
 def test_count_effective_characters_plain_text():
     """测试纯文本统计"""
@@ -30,3 +30,8 @@ def test_count_effective_characters_empty():
     """测试空字符串"""
     count = count_effective_characters("")
     assert count == 0
+
+def test_extractor_strategy_is_abstract():
+    """测试策略基类是抽象的"""
+    with pytest.raises(TypeError):
+        ExtractorStrategy()

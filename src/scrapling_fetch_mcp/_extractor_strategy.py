@@ -1,4 +1,5 @@
 import re
+from abc import ABC, abstractmethod
 
 
 def count_effective_characters(text: str) -> int:
@@ -25,3 +26,21 @@ def count_effective_characters(text: str) -> int:
     text = re.sub(r'\s+', '', text)
 
     return len(text)
+
+
+class ExtractorStrategy(ABC):
+    """内容提取策略基类"""
+
+    @abstractmethod
+    def extract(self, html: str, url: str) -> str:
+        """
+        从 HTML 中提取核心内容并转换为 Markdown
+
+        Args:
+            html: 原始 HTML 内容
+            url: 页面 URL(可用于策略内部判断)
+
+        Returns:
+            提取并格式化后的 Markdown 文本
+        """
+        pass
