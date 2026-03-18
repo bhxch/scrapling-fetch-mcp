@@ -135,7 +135,16 @@ def run_server():
         help="Markdown converter library to use. Default: markitdown. "
         "Can also be set via SCRAPLING_MARKDOWN_CONVERTER environment variable.",
     )
+    parser.add_argument(
+        "--rules-config",
+        type=str,
+        default=None,
+        help="Path to YAML file with airead format URL routing rules. "
+        "Default: Use built-in rules. "
+        "Can also be set via SCRAPLING_RULES_CONFIG environment variable.",
+    )
     args = parser.parse_args()
+
 
     # Initialize from environment first
     init_config_from_env()
@@ -152,6 +161,9 @@ def run_server():
 
     if args.markdown_converter:
         config.set_markdown_converter(args.markdown_converter)
+
+    if args.rules_config:
+        config.set_rules_config_path(args.rules_config)
 
     # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
