@@ -303,19 +303,41 @@ class SearchEngineStrategy(ExtractorStrategy):
         """
         提取snippet（摘要）
 
-        策略：
-        1. 优先查找专门的snippet标签（Google: VwiC3b, DuckDuckGo: result__snippet）
-        2. 如果没有，使用启发式方法从容器文本中提取
+        策略（启发式方法，不依赖固定class名）：
+        1. 尝试多组常见的snippet选择器（按优先级）
+        2. 如果失败，查找容器内长文本div（不包含标题的）
+        3. DuckDuckGo专用：result__snippet class
+        4. 最后使用文本过滤方法
         """
-        # 1. 尝试查找Google的snippet class（VwiC3b）
-        snippet_elem = container.find(class_='VwiC3b')
-        if snippet_elem:
-            snippet = snippet_elem.get_text(separator=' ', strip=True)
-            snippet = ' '.join(snippet.split())
-            if snippet:
-                return snippet[:400] + ('...' if len(snippet) > 400 else '')
+        # 1. Google和多搜索引擎的snippet选择器（按优先级）
+        snippet_selectors = [
+            # Google常用选择器（class名可能变化，但特征稳定）
+            {'attrs': {'data-sncf': '1'}},  # Google data属性
+            {'attrs': {'role': 'text'}},     # role属性
+            # CSS样式特征（Google使用webkit-line-clamp限制行数）
+            {'style_pattern': 'webkit-line-clamp'},
+        ]
 
-        # 2. 尝试查找DuckDuckGo的snippet标签
+        for selector in snippet_selectors:
+            # 处理style_pattern选择器
+            if 'style_pattern' in selector:
+                for elem in container.find_all('div'):
+                    style = elem.get('style', '')
+                    if selector['style_pattern'] in style:
+                        snippet = elem.get_text(separator=' ', strip=True)
+                        snippet = ' '.join(snippet.split())
+                        if snippet and len(snippet) > 20:
+                            return snippet[:400] + ('...' if len(snippet) > 400 else '')
+            else:
+                # 普通属性选择器
+                snippet_elem = container.find('div', **selector)
+                if snippet_elem:
+                    snippet = snippet_elem.get_text(separator=' ', strip=True)
+                    snippet = ' '.join(snippet.split())
+                    if snippet and len(snippet) > 20:
+                        return snippet[:400] + ('...' if len(snippet) > 400 else '')
+
+        # 2. DuckDuckGo专用：result__snippet class
         snippet_elem = container.find('a', class_='result__snippet')
         if snippet_elem:
             snippet = snippet_elem.get_text(separator=' ', strip=True)
@@ -323,14 +345,60 @@ class SearchEngineStrategy(ExtractorStrategy):
             if snippet:
                 return snippet[:400] + ('...' if len(snippet) > 400 else '')
 
-        # 3. 查找其他常见的snippet类名
-        for class_name in ['snippet', 'result-snippet', 'search-result__snippet']:
-            snippet_elem = container.find(class_=class_name)
-            if snippet_elem:
-                snippet = snippet_elem.get_text(separator=' ', strip=True)
-                snippet = ' '.join(snippet.split())
+        # 3. 通用方法：查找不包含标题的长文本div
+        for div in container.find_all('div'):
+            div_text = div.get_text(separator=' ', strip=True)
+            # 跳过包含标题的div，且文本长度要足够
+            if (len(div_text) > 40 and
+                title not in div_text and
+                not div.find('h3') and
+                not div.find('h2')):
+                snippet = ' '.join(div_text.split())
                 if snippet:
                     return snippet[:400] + ('...' if len(snippet) > 400 else '')
+
+        # 4. 最后备选：文本过滤方法
+        all_text = container.get_text(separator='\n', strip=True)
+        lines = [line.strip() for line in all_text.split('\n') if line.strip()]
+
+        snippet_lines = []
+        found_cite = False
+
+        for line in lines:
+            # 跳过标题（精确匹配或包含）
+            if line == title or (len(title) > 10 and title in line):
+                continue
+
+            # 检测cite行（包含›符号或单独的URL）
+            if ('›' in line and len(line) < 150) or (line.startswith('http') and '›' in line):
+                found_cite = True
+                continue
+
+            # 跳过独立的URL（没有›）
+            if line.startswith('http') and len(line) < 200 and ' ' not in line:
+                continue
+
+            # 跳过特殊噪音
+            if line in ['Read more', 'Read more', 'People also ask', 'Related searches']:
+                continue
+
+            # 跳过过短的行（但保留日期行）
+            if len(line) < 20 and not re.match(r'^\w+ \d{1,2}, \d{4}', line):
+                continue
+
+            # 保留这一行
+            if found_cite and len(line) >= 20:  # cite之后的行才是snippet
+                snippet_lines.append(line)
+
+        # 合并所有snippet行
+        if snippet_lines:
+            snippet = ' '.join(snippet_lines)
+            # 限制长度
+            if len(snippet) > 400:
+                snippet = snippet[:400] + '...'
+            return snippet
+
+        return ''
 
         # 3. 启发式方法：从文本中提取
         all_text = container.get_text(separator='\n', strip=True)
