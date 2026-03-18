@@ -20,6 +20,18 @@ def test_count_effective_characters_with_links():
     count = count_effective_characters(markdown)
     assert count == len("Clickhere")
 
+def test_count_effective_characters_with_images():
+    """测试图片标记移除"""
+    markdown = "![Alt text](https://example.com/image.png)"
+    count = count_effective_characters(markdown)
+    assert count == len("Alttext")
+
+def test_count_effective_characters_with_code():
+    """测试代码标记移除"""
+    markdown = "`inline code` and ```code block```"
+    count = count_effective_characters(markdown)
+    assert count == len("inlinecodeandcodeblock")
+
 def test_count_effective_characters_with_lists():
     """测试列表标记移除"""
     markdown = "- Item 1\n- Item 2\n1. First\n2. Second"
