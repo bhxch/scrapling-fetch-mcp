@@ -303,14 +303,29 @@ class SearchEngineStrategy(ExtractorStrategy):
         """
         提取snippet（摘要）
 
-        启发式规则：
-        1. 提取所有文本，去除HTML标签
-        2. 按行分割，逐行过滤
-        3. 跳过：标题、URL、cite显示、特殊噪音
-        4. 保留：包含日期、描述性文本、摘要内容
-        5. 合并所有有效行为snippet
+        策略：
+        1. 优先查找专门的snippet标签（DuckDuckGo使用<a class="result__snippet">）
+        2. 如果没有，使用启发式方法从容器文本中提取
         """
-        # 获取容器中的所有文本
+        # 1. 尝试查找专门的snippet标签（DuckDuckGo）
+        snippet_elem = container.find('a', class_='result__snippet')
+        if snippet_elem:
+            # 获取文本，保留空格（使用separator=' '避免单词粘连）
+            snippet = snippet_elem.get_text(separator=' ', strip=True)
+            # 清理多余空格
+            snippet = ' '.join(snippet.split())
+            if snippet:
+                return snippet[:400] + ('...' if len(snippet) > 400 else '')
+
+        # 2. 查找其他常见的snippet类名
+        for class_name in ['snippet', 'result-snippet', 'search-result__snippet']:
+            snippet_elem = container.find(class_=class_name)
+            if snippet_elem:
+                snippet = snippet_elem.get_text(strip=True)
+                if snippet:
+                    return snippet[:400] + ('...' if len(snippet) > 400 else '')
+
+        # 3. 启发式方法：从文本中提取
         all_text = container.get_text(separator='\n', strip=True)
         lines = [line.strip() for line in all_text.split('\n') if line.strip()]
 
