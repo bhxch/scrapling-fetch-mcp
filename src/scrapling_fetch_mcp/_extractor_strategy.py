@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import trafilatura
 from readability import Document
 from bs4 import BeautifulSoup
+from scrapling import Selector
 
 
 def count_effective_characters(text: str) -> int:
@@ -74,3 +75,18 @@ class ReadabilityStrategy(ExtractorStrategy):
         # 简单的 Markdown 转换(后续会使用统一的转换器)
         text = soup.get_text(separator='\n')
         return text.strip()
+
+
+class ScraplingStrategy(ExtractorStrategy):
+    """使用 Scrapling 内置的提取功能"""
+
+    def extract(self, html: str, url: str) -> str:
+        page = Selector(html)
+        body = page.find('body')
+
+        if body:
+            # Scrapling 的文本提取
+            text = body.get_all_text()
+            return text.strip()
+
+        return ""

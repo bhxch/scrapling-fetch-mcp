@@ -107,3 +107,23 @@ def test_readability_strategy_basic():
 
     assert isinstance(result, str)
     assert len(result) > 0
+
+
+# ScraplingStrategy Tests
+from scrapling_fetch_mcp._extractor_strategy import ScraplingStrategy
+
+def test_scrapling_strategy_basic():
+    """测试 Scrapling 提取"""
+    html = """
+    <html>
+        <body>
+            <h1>Test Page</h1>
+            <p>Some content</p>
+        </body>
+    </html>
+    """
+    strategy = ScraplingStrategy()
+    result = strategy.extract(html, "https://example.com")
+
+    assert isinstance(result, str)
+    assert len(result) > 0
