@@ -183,13 +183,31 @@ class DualExtractorStrategy(ExtractorStrategy):
 
 **文件**: `src/scrapling_fetch_mcp/_url_matcher.py`
 
-#### 3.1 配置文件格式
+#### 3.1 配置文件管理
 
-**默认路径**: `~/.scrapling/rules.yaml`
-**环境变量**: `SCRAPLING_RULES_CONFIG`
-**CLI 参数**: `--rules-config`
+**配置策略**：
+- **内置默认规则**：在代码中内置一套默认的 URL 路由规则
+- **用户自定义规则**：用户可通过参数指定自定义配置文件
+- **优先级**：用户指定配置 > 内置默认规则
 
-```yaml
+**配置文件来源**：
+1. **用户指定**（最高优先级）：
+   - CLI 参数：`--rules-config /path/to/custom_rules.yaml`
+   - 环境变量：`SCRAPLING_RULES_CONFIG=/path/to/custom_rules.yaml`
+
+2. **内置默认规则**：
+   - 当用户未指定配置文件时，使用代码中内置的默认规则
+   - 无需任何配置即可开箱即用
+
+#### 3.2 内置默认规则
+
+**文件**: `src/scrapling_fetch_mcp/_default_rules.py`
+
+```python
+DEFAULT_RULES = """
+# scrapling-fetch-mcp 默认 URL 路由规则
+# 文档：https://github.com/...
+
 # 全局默认策略
 default_strategy: dual
 
@@ -222,6 +240,11 @@ url_rules:
       pattern: ".stackoverflow.com"
     strategy: developer_platform
 
+  - match:
+      type: domain
+      pattern: "gitlab.com"
+    strategy: developer_platform
+
   # 技术文档规则
   - match:
       type: regex
@@ -233,14 +256,52 @@ url_rules:
       pattern: ".*developer\\.mozilla\\.org.*"
     strategy: documentation
 
-# 自定义策略（可选）
-custom_strategies:
-  - name: "my_wiki_extractor"
-    module: "/path/to/my_strategies.py"
-    class: "WikiExtractorStrategy"
+  - match:
+      type: regex
+      pattern: ".*readthedocs\\.io.*"
+    strategy: documentation
+
+# 自定义策略（用户可扩展）
+custom_strategies: []
+"""
 ```
 
-#### 3.2 匹配方式
+#### 3.3 用户自定义规则示例
+
+用户可创建自定义配置文件来覆盖或扩展默认规则：
+
+**示例文件**: `my_rules.yaml`
+
+```yaml
+# 全局默认策略
+default_strategy: dual
+
+# 自定义 URL 匹配规则
+url_rules:
+  # 维基百科
+  - match:
+      type: domain_suffix
+      pattern: ".wikipedia.org"
+    strategy: wiki_extractor
+
+  # 电商网站（使用自定义策略）
+  - match:
+      type: domain_suffix
+      pattern: ".amazon.com"
+    strategy: ecommerce
+
+# 自定义策略
+custom_strategies:
+  - name: "wiki_extractor"
+    module: "/home/user/.scrapling/my_strategies.py"
+    class: "WikiExtractorStrategy"
+
+  - name: "ecommerce"
+    module: "/home/user/.scrapling/my_strategies.py"
+    class: "EcommerceStrategy"
+```
+
+#### 3.4 匹配方式
 
 支持三种 URL 匹配方式：
 
@@ -248,20 +309,241 @@ custom_strategies:
    - `github.com` 匹配 `github.com` 和 `www.github.com`
    - 不匹配 `docs.github.com`
 
-2. **domain_suffix**：域名后缀匹配
-   - `.google.com` 匹配 `www.google.com`、`mail.google.com`、`docs.google.com`
-   - 不匹配 `google.com`（需要配置两个规则）
+2. **domain_suffix**：域名后缀匹配（智能匹配）
+   - **模式 `".google.com"`**：匹配 `google.com`、`www.google.com`、`mail.google.com`、`docs.google.com`
+   - **模式 `"google.com"`**：只精确匹配 `google.com`
+   - **智能逻辑**：如果模式以 `.` 开头，自动匹配顶级域名和所有子域名
+
+   **实现逻辑**：
+   ```python
+   if match_type == 'domain_suffix':
+       if pattern.startswith('.'):
+           # 模式是 ".google.com"
+           # 匹配 "google.com" 或 "*.google.com"
+           base_domain = pattern[1:]  # "google.com"
+           return (
+               domain == base_domain or  # 匹配顶级域名
+               domain.endswith(pattern)   # 匹配子域名
+           )
+       else:
+           # 模式是 "google.com"
+           # 只精确匹配
+           return domain == pattern
+   ```
 
 3. **regex**：正则表达式匹配
    - `.*docs\\.python\\.org.*` 匹配所有包含 `docs.python.org` 的 URL
    - 最灵活但性能稍低
 
-#### 3.3 热加载机制
+#### 3.5 热加载机制
 
 URLMatcher 会检测配置文件的修改时间：
 - 每次匹配请求时检查文件 mtime
 - 如果文件被修改，重新加载配置
 - 无需重启 MCP 服务器
+
+#### 3.6 错误处理机制
+
+完整的错误处理确保系统在各种异常情况下仍能正常工作。
+
+##### 3.6.1 YAML 解析失败
+
+**场景**：配置文件语法错误
+
+```yaml
+# 错误示例：缩进错误
+url_rules:
+  - match:
+      type: domain
+    pattern: "github.com"  # 错误的缩进
+```
+
+**处理方案**：
+```python
+def _load_config(self) -> None:
+    """加载配置文件，处理 YAML 解析错误"""
+    try:
+        with open(self.config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        import logging
+        logging.warning(
+            f"Failed to parse YAML config {self.config_path}: {e}. "
+            f"Falling back to built-in default rules."
+        )
+        # 降级到内置默认规则
+        config = yaml.safe_load(DEFAULT_RULES)
+    except FileNotFoundError:
+        # 文件不存在，使用内置默认规则（静默处理）
+        config = yaml.safe_load(DEFAULT_RULES)
+
+    self._apply_config(config)
+```
+
+##### 3.6.2 自定义策略模块加载失败
+
+**场景1**：模块文件不存在
+
+```yaml
+custom_strategies:
+  - name: "my_strategy"
+    module: "/nonexistent/path.py"  # 文件不存在
+    class: "MyStrategy"
+```
+
+**处理方案**：
+```python
+try:
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None:
+        raise FileNotFoundError(f"Module not found: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+except FileNotFoundError as e:
+    logging.warning(
+        f"Custom strategy module not found: {module_path}. "
+        f"Strategy '{name}' will not be available."
+    )
+    continue
+```
+
+**场景2**：类不存在
+
+```yaml
+custom_strategies:
+  - name: "my_strategy"
+    module: "/path/to/module.py"
+    class: "NonexistentClass"  # 类不存在
+```
+
+**处理方案**：
+```python
+try:
+    strategy_class = getattr(module, class_name)
+except AttributeError:
+    logging.warning(
+        f"Class '{class_name}' not found in module {module_path}. "
+        f"Available classes: {[x for x in dir(module) if not x.startswith('_')]}. "
+        f"Strategy '{name}' will not be available."
+    )
+    continue
+```
+
+**场景3**：类不继承 ExtractorStrategy
+
+```python
+# 用户的代码
+class MyStrategy:  # 错误：没有继承 ExtractorStrategy
+    def extract(self, html, url):
+        return ""
+```
+
+**处理方案**：
+```python
+if not issubclass(strategy_class, ExtractorStrategy):
+    logging.warning(
+        f"Custom strategy '{name}' must inherit from ExtractorStrategy. "
+        f"Current base classes: {strategy_class.__bases__}. "
+        f"Strategy will not be available."
+    )
+    continue
+```
+
+##### 3.6.3 配置值无效
+
+**场景**：未知的匹配类型或策略名称
+
+```yaml
+url_rules:
+  - match:
+      type: invalid_type  # 无效的匹配类型
+    strategy: nonexistent_strategy  # 不存在的策略
+```
+
+**处理方案**：
+```python
+def _validate_rule(self, rule: dict) -> bool:
+    """验证规则配置是否有效"""
+    match_config = rule.get('match', {})
+    match_type = match_config.get('type')
+    strategy = rule.get('strategy')
+
+    # 验证匹配类型
+    valid_types = ['domain', 'domain_suffix', 'regex']
+    if match_type not in valid_types:
+        logging.warning(
+            f"Invalid match type '{match_type}' in rule. "
+            f"Valid types: {valid_types}. Rule will be ignored."
+        )
+        return False
+
+    # 验证策略是否存在（内置 + 已加载的自定义）
+    available_strategies = StrategyFactory.list_strategies()
+    if strategy not in available_strategies:
+        logging.warning(
+            f"Unknown strategy '{strategy}' in rule. "
+            f"Available strategies: {available_strategies}. "
+            f"Rule will be ignored."
+        )
+        return False
+
+    return True
+```
+
+##### 3.6.4 运行时提取失败
+
+**场景**：提取过程中发生异常
+
+**处理方案**：
+```python
+def extract(self, html: str, url: str) -> str:
+    """提取内容，处理运行时错误"""
+    try:
+        return self._do_extract(html, url)
+    except Exception as e:
+        import logging
+        logging.error(
+            f"Extraction failed for {url} using strategy {self.__class__.__name__}: {e}"
+        )
+        # 降级到基础提取（简单返回原始 HTML 的纯文本）
+        return self._fallback_extract(html)
+
+def _fallback_extract(self, html: str) -> str:
+    """降级提取方法：从 HTML 中提取纯文本"""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # 移除 script 和 style 标签
+    for tag in soup(['script', 'style', 'nav', 'header', 'footer']):
+        tag.decompose()
+
+    # 获取纯文本
+    text = soup.get_text(separator='\n')
+
+    # 压缩空白
+    import re
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r' +\n', '\n', text)
+
+    return text.strip()
+```
+
+##### 3.6.5 错误处理总结
+
+| 错误类型 | 处理策略 | 用户体验 |
+|---------|---------|---------|
+| YAML 解析失败 | 降级到内置默认规则 | ✅ 功能继续，使用默认规则 |
+| 配置文件不存在 | 使用内置默认规则 | ✅ 开箱即用 |
+| 自定义模块不存在 | 记录警告，跳过该策略 | ✅ 其他策略仍可用 |
+| 自定义类不存在 | 记录警告，跳过该策略 | ✅ 其他策略仍可用 |
+| 类继承错误 | 记录警告，跳过该策略 | ✅ 其他策略仍可用 |
+| 配置值无效 | 记录警告，跳过该规则 | ✅ 其他规则仍可用 |
+| 运行时提取失败 | 降级到基础提取 | ✅ 返回纯文本内容 |
+
+**设计原则**：
+- **优雅降级**：任何错误都不应该导致系统完全失败
+- **清晰日志**：记录详细的警告和错误信息，便于调试
+- **继续运行**：单个组件失败不影响其他组件正常工作
 
 ### 4. 策略工厂
 
@@ -329,22 +611,95 @@ url_rules:
 
 **文件**: `src/scrapling_fetch_mcp/_markdown_postprocessor.py`
 
-所有策略提取后统一进行后处理优化：
+所有策略提取后统一进行后处理优化。
+
+#### 6.1 迭代实现策略
+
+Markdown 后处理器采用**迭代优化**方法：
+
+**Phase 1：基础版本（首次实现）**
+- 实现最常见问题的处理
+- 简单、稳定、易测试
+- 解决 80% 的格式问题
+
+**Phase 2：测试和收集反馈**
+- 在真实网站上测试
+- 收集用户反馈
+- 统计常见的格式问题
+
+**Phase 3：迭代优化**
+- 根据测试反馈添加更多处理步骤
+- 保持向后兼容
+- 可配置的处理选项
+
+#### 6.2 基础版本实现
 
 ```python
 def postprocess_markdown(markdown: str) -> str:
     """
-    统一的 Markdown 后处理，进一步优化内容精简度
+    Markdown 后处理 - 基础版本
 
-    处理内容：
-    1. 压缩多余的空行（最多保留2个连续空行）
+    处理最常见的问题：
+    1. 压缩多余的空行（最多保留2个）
     2. 移除行尾空白
-    3. 压缩代码块前后的空行（保留1个）
-    4. 移除列表项前后的多余空行
-    5. 优化标题前后的空行
-    6. 移除文档开头和结尾的空行
-    7. 移除重复的空行（只保留一个）
+    3. 移除文档开头和结尾的空行
     """
+    if not markdown:
+        return ""
+
+    # 1. 压缩多余的空行（最多保留2个连续空行）
+    markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+
+    # 2. 移除行尾空白
+    markdown = re.sub(r' +\n', '\n', markdown)
+
+    # 3. 移除文档开头和结尾的空行
+    markdown = markdown.strip()
+
+    return markdown
+```
+
+#### 6.3 增强版本（未来迭代）
+
+基于测试反馈，可选添加以下处理：
+
+```python
+def postprocess_markdown_enhanced(markdown: str) -> str:
+    """
+    Markdown 后处理 - 增强版本（Phase 3）
+
+    在基础版本上添加更多优化
+    """
+    # 基础处理
+    markdown = postprocess_markdown(markdown)
+
+    # 根据用户反馈添加的处理
+    if CONFIG.get('code_blocks_cleanup', True):
+        # 压缩代码块前后的空行（保留1个）
+        markdown = re.sub(r'\n{2,}```', '\n```', markdown)
+        markdown = re.sub(r'```\n{2,}', '```\n', markdown)
+
+    if CONFIG.get('lists_cleanup', True):
+        # 移除列表项前后的多余空行
+        markdown = re.sub(r'\n{2,}([-*+])', r'\n\1', markdown)
+        markdown = re.sub(r'\n{2,}(\d+\.)', r'\n\1', markdown)
+
+    if CONFIG.get('headers_cleanup', True):
+        # 优化标题前后的空行
+        markdown = re.sub(r'\n{2,}(#{1,6})', r'\n\n\1', markdown)
+        markdown = re.sub(r'(#{1,6}[^\n]+)\n{2,}', r'\1\n\n', markdown)
+
+    return markdown
+```
+
+#### 6.4 配置选项（未来）
+
+```python
+# 用户可在配置文件中控制后处理行为
+markdown_postprocessor:
+  code_blocks_cleanup: true
+  lists_cleanup: true
+  headers_cleanup: false
 ```
 
 ### 7. 集成到现有系统
@@ -459,10 +814,13 @@ src/scrapling_fetch_mcp/
 ├── _url_matcher.py               # 新增：URL 匹配器
 ├── _strategy_factory.py          # 新增：策略工厂
 ├── _markdown_postprocessor.py    # 新增：Markdown 后处理
+├── _default_rules.py             # 新增：内置默认规则
 └── mcp.py                        # 修改：添加 airead 格式支持
 
-~/.scrapling/
-└── rules.yaml                    # 默认的 URL 路由规则配置（可选）
+docs/
+├── airead-format-guide.md        # 新增：airead 格式使用指南
+├── custom-strategies.md          # 新增：自定义策略开发指南
+└── configuration.md              # 新增：配置文件详细文档
 
 docs/superpowers/specs/
 └── 2026-03-18-airead-format-design.md  # 本设计文档
@@ -478,15 +836,30 @@ docs/superpowers/specs/
    - 测试双重提取器的对比逻辑
 
 2. **test_url_matcher.py**
-   - 测试域名匹配
-   - 测试域名后缀匹配
-   - 测试正则表达式匹配
+   - 测试域名匹配（domain）
+   - 测试智能域名后缀匹配（domain_suffix）
+     - `.google.com` 匹配 `google.com` 和 `www.google.com`
+     - `google.com` 只匹配 `google.com`
+   - 测试正则表达式匹配（regex）
    - 测试配置文件加载和热加载
+   - 测试使用内置默认规则
 
 3. **test_strategy_factory.py**
    - 测试策略注册
    - 测试自定义策略加载
    - 测试错误处理
+
+4. **test_error_handling.py**（新增）
+   - 测试 YAML 解析失败时的降级行为
+   - 测试自定义策略模块不存在的处理
+   - 测试自定义策略类不存在的处理
+   - 测试策略类继承验证
+   - 测试无效配置值的验证
+   - 测试运行时提取失败的降级
+
+5. **test_markdown_postprocessor.py**（新增）
+   - 测试基础版本的所有处理步骤
+   - 测试空输入和边界情况
 
 ### 集成测试
 
@@ -608,22 +981,67 @@ docs/superpowers/specs/
    - 支持策略参数配置（如 trafilatura 的 `favor_recall` vs `favor_precision`）
    - 支持策略链（多个策略组合）
 
-3. **机器学习**：
+3. **dual 策略优化标准**（优先级：中）：
+   当前 dual 策略使用"有效字符数最多"作为最优标准。未来可考虑多维度评分：
+
+   ```python
+   def score_extraction_result(result: str, url: str) -> float:
+       """多维度评估提取结果质量"""
+       score = 0.0
+
+       # 1. 有效字符数（基础分，50% 权重）
+       char_count = count_effective_characters(result)
+       score += char_count * 0.5
+
+       # 2. 内容密度（有效字符 / 总字符，归一化加权）
+       density = char_count / len(result) if len(result) > 0 else 0
+       score += density * 1000
+
+       # 3. 结构完整性（是否包含标题、段落等）
+       has_headers = bool(re.search(r'^#+', result, re.MULTILINE))
+       has_paragraphs = result.count('\n\n') > 2
+       structure_score = (has_headers * 100 + has_paragraphs * 100)
+       score += structure_score
+
+       return score
+   ```
+
+   **最小阈值过滤**：
+   ```python
+   MIN_THRESHOLD = 500  # 有效字符数最小阈值
+
+   valid_results = [
+       (count, result, extractor)
+       for count, result, extractor in results
+       if count >= MIN_THRESHOLD
+   ]
+
+   if not valid_results:
+       logging.warning("All extractors produced low-quality results")
+       # 返回字数最多的（虽然不够好）
+   ```
+
+   **实施建议**：
+   - Phase 1：保持当前简单实现（字数最多）
+   - Phase 2：收集真实网站测试数据
+   - Phase 3：基于测试结果调整评分算法
+
+4. **机器学习**：
    - 使用 ML 模型自动识别网站类型并选择策略
    - 基于用户反馈优化提取算法
    - 自动学习 URL 匹配规则
 
-4. **统计分析**：
+5. **统计分析**：
    - 添加提取效果统计（token 节省比例、提取时间等）
    - 生成分析报告
    - 可视化对比工具
 
-5. **用户反馈**：
+6. **用户反馈**：
    - 收集用户反馈优化提取算法和规则配置
    - 建立社区共享的规则库
    - 支持规则的导入导出
 
-6. **兼容性**：
+7. **兼容性**：
    - 支持更多 Markdown 转换库（如 markdownify、html2text）
    - 支持自定义 Markdown 后处理管道
    - 支持输出格式扩展（如 JSON、XML）
