@@ -90,3 +90,39 @@ class ScraplingStrategy(ExtractorStrategy):
             return text.strip()
 
         return ""
+
+
+class SearchEngineStrategy(ExtractorStrategy):
+    """搜索引擎专用策略"""
+
+    def extract(self, html: str, url: str) -> str:
+        return trafilatura.extract(
+            html,
+            include_formatting=True,
+            output_format='markdown',
+            favor_precision=True
+        ) or ""
+
+
+class DeveloperPlatformStrategy(ExtractorStrategy):
+    """开发者平台专用策略"""
+
+    def extract(self, html: str, url: str) -> str:
+        return trafilatura.extract(
+            html,
+            include_formatting=True,
+            output_format='markdown',
+            include_tables=True
+        ) or ""
+
+
+class DocumentationStrategy(ExtractorStrategy):
+    """技术文档专用策略"""
+
+    def extract(self, html: str, url: str) -> str:
+        return trafilatura.extract(
+            html,
+            include_formatting=True,
+            output_format='markdown',
+            favor_precision=True
+        ) or ""

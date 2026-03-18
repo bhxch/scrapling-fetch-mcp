@@ -127,3 +127,54 @@ def test_scrapling_strategy_basic():
 
     assert isinstance(result, str)
     assert len(result) > 0
+
+
+# Specialized Strategies Tests
+from scrapling_fetch_mcp._extractor_strategy import SearchEngineStrategy
+from scrapling_fetch_mcp._extractor_strategy import DeveloperPlatformStrategy
+from scrapling_fetch_mcp._extractor_strategy import DocumentationStrategy
+
+def test_search_engine_strategy_basic():
+    """测试搜索引擎专用策略"""
+    html = """
+    <html>
+        <body>
+            <h1>Search Results</h1>
+            <div class="result"><a href="/link1">Result 1</a></div>
+        </body>
+    </html>
+    """
+    strategy = SearchEngineStrategy()
+    result = strategy.extract(html, "https://google.com/search?q=test")
+
+    assert isinstance(result, str)
+
+def test_developer_platform_strategy_basic():
+    """测试开发者平台专用策略"""
+    html = """
+    <html>
+        <body>
+            <h1>GitHub Repo</h1>
+            <table><tr><td>Stars</td><td>100</td></tr></table>
+        </body>
+    </html>
+    """
+    strategy = DeveloperPlatformStrategy()
+    result = strategy.extract(html, "https://github.com/user/repo")
+
+    assert isinstance(result, str)
+
+def test_documentation_strategy_basic():
+    """测试文档专用策略"""
+    html = """
+    <html>
+        <body>
+            <h1>API Reference</h1>
+            <p>Documentation content</p>
+        </body>
+    </html>
+    """
+    strategy = DocumentationStrategy()
+    result = strategy.extract(html, "https://docs.python.org/3/library/functions.html")
+
+    assert isinstance(result, str)
