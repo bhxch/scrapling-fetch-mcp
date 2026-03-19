@@ -33,10 +33,6 @@ async def s_fetch_page(
 
     The airead format uses intelligent content extraction with URL-based routing to specialized strategies for different website types (search engines, documentation, developer platforms, etc.).
 
-    The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
-
-    Pages are cached for the configured TTL (--cache-ttl, default 300 seconds) to avoid repeated requests when fetching large pages in segments using start_index parameter.
-
     Args:
         url: URL to fetch
         mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
@@ -79,11 +75,7 @@ async def s_fetch_pattern(
 ) -> str:
     """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
 
-    IMPORTANT: Use format='markdown' (default) for reading or extracting content. Only use format='html' when you specifically need the raw HTML structure.
-
-    The server can be configured with a minimum mode via --min-mode CLI argument or SCRAPLING_MIN_MODE environment variable to prevent multiple retry attempts from escalating modes.
-
-    Pages are cached for the configured TTL (--cache-ttl, default 300 seconds) to avoid repeated requests when searching the same page with different patterns.
+    IMPORTANT: Use format='markdown' for reading or extracting content. Only use format='html' when you specifically need the raw HTML structure.
 
     Args:
         url: URL to fetch
