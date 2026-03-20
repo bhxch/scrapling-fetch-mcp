@@ -158,6 +158,17 @@ def run_server():
         "Default: markdown. "
         "Can also be set via SCRAPLING_DEFAULT_FORMAT environment variable.",
     )
+    parser.add_argument(
+        "--disable-url-rewrite",
+        action="store_true",
+        help="Disable automatic URL rewriting. Default: enabled.",
+    )
+    parser.add_argument(
+        "--url-rewrite-config",
+        type=str,
+        default=None,
+        help="Path to YAML file with custom URL rewrite rules.",
+    )
     args = parser.parse_args()
 
 
@@ -183,6 +194,12 @@ def run_server():
     if args.default_format:
         config.set_default_format(args.default_format)
 
+    if args.disable_url_rewrite:
+        config.set_disable_url_rewrite(True)
+
+    if args.url_rewrite_config:
+        config.set_url_rewrite_config_path(args.url_rewrite_config)
+
     # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
     logger.info(f"Minimum mode set to: {config.min_mode}")
@@ -190,6 +207,7 @@ def run_server():
     logger.info(f"Scraping directory set to: {config.scraping_dir}")
     logger.info(f"Markdown converter set to: {config.markdown_converter}")
     logger.info(f"Default format set to: {config.default_format}")
+    logger.info(f"URL rewrite: {'disabled' if config.disable_url_rewrite else 'enabled'}")
 
     mcp.run(transport="stdio")
 
