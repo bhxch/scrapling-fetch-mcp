@@ -286,6 +286,68 @@ Configure where saved content is stored:
 - For specific searches, mention what you're looking for and Claude will use pattern matching
 - The metadata returned helps Claude decide whether to page or search
 
+## URL Rewriting
+
+The server automatically rewrites certain URLs to lighter, more accessible versions:
+
+- **GitHub**: `blob` URLs → `raw.githubusercontent.com` (direct file content)
+- **DuckDuckGo**: Search pages → HTML version (no JavaScript)
+- **Reddit**: `www.reddit.com` → `old.reddit.com` (lighter version)
+- **StackOverflow**: Question pages → StackPrinter format (printer-friendly)
+
+This improves both stealth success rates and fetch speed.
+
+### Disable URL Rewriting
+
+If you need to access the original URLs:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--disable-url-rewrite"]
+    }
+  }
+}
+```
+
+Or via environment variable:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_DISABLE_URL_REWRITE": "true"
+      }
+    }
+  }
+}
+```
+
+### Custom Rewrite Rules
+
+Add your own rewrite rules via configuration file:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--url-rewrite-config", "/path/to/rewrite-rules.yaml"
+      ]
+    }
+  }
+}
+```
+
+See [URL Rewrite Configuration](docs/url-rewrite-configuration.md) for details.
+
 ## Limitations
 
 - Designed for text content only (documentation, articles, references)

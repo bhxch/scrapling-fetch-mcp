@@ -1,0 +1,69 @@
+# URL Rewrite Rules Configuration Example
+# Use with: scrapling-fetch-mcp --url-rewrite-config /path/to/this/file.yaml
+
+url_rewrite_rules:
+  # =========================================================================
+  # Example 1: Override built-in GitHub rule
+  # =========================================================================
+  # If you want to customize the GitHub rewrite behavior
+  - match:
+      type: domain_suffix
+      pattern: github.com
+    rewrite:
+      type: regex_replace
+      pattern: 'github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)'
+      replacement: 'raw.githubusercontent.com/\1/\2/\3/\4'
+  
+  # =========================================================================
+  # Example 2: Add GitLab support
+  # =========================================================================
+  # GitLab has a similar structure to GitHub
+  - match:
+      type: domain_suffix
+      pattern: gitlab.com
+    rewrite:
+      type: regex_replace
+      pattern: 'gitlab\.com/([^/]+)/([^/]+)/-/blob/([^/]+)/(.*)'
+      replacement: 'gitlab.com/\1/\2/-/raw/\3/\4'
+  
+  # =========================================================================
+  # Example 3: Add support for GitHub Gists
+  # =========================================================================
+  - match:
+      type: domain
+      pattern: gist.github.com
+    rewrite:
+      type: regex_replace
+      pattern: 'gist\.github\.com/([^/]+)/([a-f0-9]+)$'
+      replacement: 'gist.githubusercontent.com/\1/\2/raw'
+  
+  # =========================================================================
+  # Example 4: Twitter/X → Nitter (alternative frontend)
+  # =========================================================================
+  # Note: Nitter instances may have varying availability
+  - match:
+      type: domain
+      pattern: twitter.com
+    rewrite:
+      type: domain_replace
+      old: twitter.com
+      new: nitter.net
+  
+  # =========================================================================
+  # Example 5: Disable Reddit rewriting
+  # =========================================================================
+  # If you prefer the modern Reddit interface
+  - match:
+      type: domain
+      pattern: www.reddit.com
+    rewrite:
+      type: none  # Don't rewrite
+
+# =========================================================================
+# Tips:
+# =========================================================================
+# 1. Custom rules take priority over built-in rules
+# 2. First matching rule wins
+# 3. Use 'type: none' to disable a built-in rule
+# 4. Test your rules with DEBUG logging enabled
+# 5. Maximum 3 rewrite iterations (prevents loops)
