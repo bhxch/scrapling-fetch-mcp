@@ -38,6 +38,29 @@
 | Reddit | `www.reddit.com/r/...` | `old.reddit.com/r/...` | 老版本，更轻量 |
 | StackOverflow | `stackoverflow.com/questions/12345/title` | `stackprinter.com/export?question=12345&service=stackoverflow&format=HTML&comments=true` | 打印友好版本 |
 
+**边界情况说明：**
+
+**GitHub 规则：**
+- ✅ 匹配：`/blob/` 路径（文件查看）
+- ❌ 不匹配：`/tree/` 路径（目录浏览）、`/raw/` 路径（已经是 raw）
+- 📝 原因：`/tree/` 是目录页面，不对应单个文件内容；`/raw/` 已经是轻量级版本
+
+**DuckDuckGo 规则：**
+- ✅ 匹配：带查询参数的搜索 URL
+- ❌ 不匹配：已经是 `/html/` 或 `/lite/` 路径的 URL
+- 📝 保留：所有查询参数（如 `?q=python&kl=us-en`）
+
+**Reddit 规则：**
+- ✅ 匹配：`www.reddit.com` 的所有路径
+- ❌ 不匹配：已经是 `old.reddit.com` 的 URL
+- ⚠️  限制：某些新功能（如聊天、投票）在 old 版本可能不可用
+
+**StackOverflow 规则：**
+- ✅ 匹配：`stackoverflow.com/questions/{id}/*`
+- ❌ 不匹配：其他 StackExchange 站点（如 `serverfault.com`、`askubuntu.com`）
+- ⚠️  限制：当前仅支持 `stackoverflow.com`，未覆盖整个 StackExchange 网络
+- 📝 建议：未来可通过自定义规则扩展到其他 StackExchange 站点
+
 ### 配置选项
 
 **启动参数：**
@@ -57,14 +80,21 @@
     ↓
 fetch_page_impl / fetch_pattern_impl
     ↓
-browse_url(url, mode)
-    ↓
 【新增】URL Rewriter.rewrite(url)
     ↓
-重写后的 URL → Scrapling 抓取
+使用重写后的 URL 进行缓存查询/存储
+    ↓
+browse_url(rewritten_url, mode)
+    ↓
+Scrapling 抓取
     ↓
 返回内容
 ```
+
+**关键设计点：**
+- URL 重写在 `fetch_page_impl` 和 `fetch_pattern_impl` 中最开始执行
+- 缓存基于重写后的 URL（避免重复抓取同一内容的不同 URL 形式）
+- airead 策略匹配基于重写后的 URL
 
 ### 核心组件
 
@@ -131,20 +161,47 @@ class Config:
 ```
 
 #### 4. 集成点
-**位置**: `src/scrapling_fetch_mcp/_scrapling.py`
+**位置**: `src/scrapling_fetch_mcp/_fetcher.py`
 
 ```python
-async def browse_url(url: str, mode: str, page_action=None):
-    # 新增：URL 重写
+async def fetch_page_impl(
+    url: str,
+    mode: str,
+    format: str,
+    max_length: int,
+    start_index: int,
+    save_content: bool = False,
+    scraping_dir: Optional[Path] = None,
+) -> str:
+    # 新增：URL 重写（在最开始执行）
     if not config.disable_url_rewrite:
         original_url = url
         url = config.url_rewriter.rewrite(url)
         if url != original_url:
-            logger.info(f"URL rewritten: {original_url} → {url}")
-    
-    # 原有逻辑
+            logger.debug(f"URL rewritten: {original_url} → {url}")
+
+    # 使用重写后的 URL 进行后续操作
+    effective_mode = config.get_effective_mode(mode)
+
+    # 缓存查询（基于重写后的 URL）
+    cached_page = config.cache.get(url, effective_mode)
+    if cached_page is not None:
+        page = cached_page
+    else:
+        # Fetch and cache the page
+        page = await browse_url(url, effective_mode, page_action=page_action)
+        config.cache.set(url, effective_mode, page)
+
+    # 后续处理使用重写后的 URL
+    if format == "airead":
+        full_content = _extract_with_airead(html_content, url)  # 重写后的 URL
     # ...
 ```
+
+**说明**：
+- URL 重写在函数最开始执行，确保缓存基于重写后的 URL
+- airead 策略匹配使用重写后的 URL
+- `browse_url` 函数本身不需要修改
 
 ### 规则格式
 
@@ -181,12 +238,57 @@ url_rewrite_rules:
 2. 内置规则（GitHub → DuckDuckGo → Reddit → StackOverflow）
 3. 不匹配则返回原 URL
 
+### 与 airead 格式的协同
+
+**执行顺序：**
+1. URL 重写（在 `fetch_page_impl` 开始时）
+2. airead 策略匹配（基于重写后的 URL）
+3. 内容提取（使用匹配的策略）
+
+**设计原则：**
+- airead 策略匹配基于**重写后的 URL**
+- URL 重写规则和 airead 策略规则是**独立的系统**
+- 重写规则关注"如何更高效地获取内容"
+- airead 策略关注"如何更智能地提取内容"
+
+**示例场景：**
+
+| 原始 URL | 重写后 URL | airead 策略 |
+|----------|------------|-------------|
+| `github.com/user/repo/blob/main/README.md` | `raw.githubusercontent.com/user/repo/main/README.md` | `markdown` (默认) |
+| `duckduckgo.com/?q=python` | `duckduckgo.com/html/?q=python` | `search-engine` |
+| `stackoverflow.com/questions/12345/title` | `stackprinter.com/export?question=12345&...` | `dual` (默认) |
+
+**注意事项：**
+- 某些重写后的 URL 可能不再需要特殊的 airead 策略（如 StackPrinter 已经是简化格式）
+- 重写规则优先于 airead 策略考虑，确保先获得轻量级版本
+- 配置文件可以分开管理（`url-rewrite-config.yaml` 和 `rules-config.yaml`）
+
+### 与 content_saver 的协同
+
+**保存逻辑：**
+- `save_content` 功能基于**重写后的 URL** 创建目录和保存文件
+- 目录命名：使用重写后的 URL 生成唯一标识
+- 元数据记录：在 `metadata.json` 中同时记录原始 URL 和重写后的 URL
+
+**示例：**
+```json
+{
+  "original_url": "https://github.com/user/repo/blob/main/README.md",
+  "rewritten_url": "https://raw.githubusercontent.com/user/repo/main/README.md",
+  "fetch_time": "2026-03-20T10:30:00Z",
+  "mode": "stealth"
+}
+```
+
 ### 错误处理
 
 **关键场景**:
 
 1. **无效 URL**
-   - 检测：缺少 scheme 或 netloc
+   - 检测：缺少 scheme 或 netloc，或 scheme 不在允许列表中
+   - 允许的 scheme：`http`、`https`（其他如 `ftp`、`file` 等不支持）
+   - 验证方法：使用 `urllib.parse.urlparse` 解析 URL
    - 处理：返回原 URL，记录警告
 
 2. **正则表达式错误**
@@ -197,9 +299,21 @@ url_rewrite_rules:
    - 检测：文件不存在或 YAML 解析失败
    - 处理：降级到内置规则，记录警告
 
-4. **重写循环**
-   - 检测：重写后的 URL 等于原 URL
+4. **重写循环和链式重写**
+   - 检测：重写后的 URL 等于原 URL，或达到最大重写次数
    - 处理：直接返回，不再重写
+   - 最大重写次数：3 次（防止无限循环）
+   - 实现：
+     ```python
+     def rewrite(self, url: str, max_iterations: int = 3) -> str:
+         for _ in range(max_iterations):
+             rewritten = self._apply_first_matching_rule(url)
+             if rewritten == url:  # 无变化，停止
+                 return url
+             url = rewritten
+         logger.warning(f"Max rewrite iterations reached: {url}")
+         return url
+     ```
 
 5. **保留 URL 组件**
    - 查询参数：重写时保留
@@ -233,6 +347,36 @@ def rewrite(self, url: str) -> str:
         logger.error(f"URL rewrite failed: {e}")
         return url  # 失败时返回原 URL
 ```
+
+### 日志规范
+
+**日志级别：**
+
+| 级别 | 场景 | 示例 |
+|------|------|------|
+| DEBUG | URL 重写成功 | `"URL rewritten: {original} → {rewritten}"` |
+| INFO | 不使用 | （避免过多日志） |
+| WARNING | 可恢复的错误 | `"Invalid URL format: {url}"`<br>`"Custom rewrite config not found, using built-in rules"` |
+| ERROR | 严重错误但继续运行 | `"Failed to load rewrite config: {error}"`<br>`"Regex compilation failed in rule: {rule}"` |
+
+**日志格式：**
+```python
+# 重写成功（DEBUG 级别）
+logger.debug(f"URL rewritten: {original_url} → {rewritten_url}")
+
+# 规则匹配失败（不记录，静默返回原 URL）
+
+# 配置文件错误（WARNING 级别）
+logger.warning(f"URL rewrite config file not found: {config_path}, using built-in rules")
+
+# 正则错误（ERROR 级别）
+logger.error(f"Invalid regex in rewrite rule: {rule_name}, error: {error}")
+```
+
+**性能考虑：**
+- URL 重写可能被频繁调用，避免在热路径中使用 INFO 或更高级别的日志
+- 使用 DEBUG 级别记录每次重写，可通过配置启用
+- 只在错误情况使用 WARNING/ERROR
 
 ## 测试策略
 
