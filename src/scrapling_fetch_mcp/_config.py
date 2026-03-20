@@ -174,6 +174,7 @@ class Config:
             self._url_rewrite_config_path = Path(path)
         else:
             self._url_rewrite_config_path = path
+        self._url_rewriter = None  # Reset cached rewriter instance
 
     @property
     def url_rewriter(self) -> 'URLRewriter':

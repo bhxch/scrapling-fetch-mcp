@@ -15,17 +15,17 @@ BUILTIN_REWRITE_RULES = [
         "match": {"type": "domain", "pattern": "duckduckgo.com"},
         "rewrite": {
             "type": "regex_replace",
-            "pattern": r"^https://duckduckgo\.com/\?(.*)$",
-            "replacement": r"https://duckduckgo.com/html/?\1"
+            "pattern": r"^https://(www\.)?duckduckgo\.com/\?(.*)$",
+            "replacement": r"https://duckduckgo.com/html/?\2"
         }
     },
-    # Reddit: www → old
+    # Reddit: www → old (also handles bare reddit.com)
     {
-        "match": {"type": "domain", "pattern": "www.reddit.com"},
+        "match": {"type": "domain", "pattern": "reddit.com"},
         "rewrite": {
-            "type": "domain_replace",
-            "old": "www.reddit.com",
-            "new": "old.reddit.com"
+            "type": "regex_replace",
+            "pattern": r"^https://(www\.)?reddit\.com",
+            "replacement": r"https://old.reddit.com"
         }
     },
     # StackOverflow: questions → StackPrinter

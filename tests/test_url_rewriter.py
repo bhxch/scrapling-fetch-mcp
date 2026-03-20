@@ -48,6 +48,15 @@ class TestBasicRewrite:
         url = "https://duckduckgo.com/html/?q=python"
         assert rewriter.rewrite(url) == url
 
+    def test_duckduckgo_www_prefix(self):
+        """DuckDuckGo www 前缀也应该重写"""
+        rewriter = URLRewriter()
+        url = "https://www.duckduckgo.com/?q=python"
+        result = rewriter.rewrite(url)
+        assert "/html/" in result
+        assert "q=python" in result
+        assert "www.duckduckgo.com" not in result
+
     def test_reddit_old_version(self):
         """Reddit URL 应该重写为 old.reddit.com"""
         rewriter = URLRewriter()
@@ -60,6 +69,13 @@ class TestBasicRewrite:
         rewriter = URLRewriter()
         url = "https://old.reddit.com/r/python/"
         assert rewriter.rewrite(url) == url
+
+    def test_reddit_bare_domain(self):
+        """Reddit 裸域名（无 www 前缀）也应该重写"""
+        rewriter = URLRewriter()
+        url = "https://reddit.com/r/python/"
+        result = rewriter.rewrite(url)
+        assert "old.reddit.com" in result
 
     def test_stackoverflow_printer(self):
         """StackOverflow 问题应该重写为 StackPrinter"""
@@ -126,9 +142,10 @@ class TestEdgeCases:
         assert "raw.githubusercontent.com" in result
     
     def test_github_with_query_params(self):
-        """GitHub URL 重写时应该保留查询参数"""
+        """GitHub URL 重写时保留查询参数"""
         rewriter = URLRewriter()
         url = "https://github.com/user/repo/blob/main/file.md?raw=true"
         result = rewriter.rewrite(url)
-        # 当前实现可能不保留查询参数，这是已知限制
-        pass
+        assert "raw.githubusercontent.com" in result
+        # regex_replace 尾部 .* 会捕获查询参数
+        assert "?raw=true" in result or "&raw=true" in result
