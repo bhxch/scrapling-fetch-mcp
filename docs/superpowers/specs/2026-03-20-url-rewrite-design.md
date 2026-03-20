@@ -202,6 +202,7 @@ async def fetch_page_impl(
 - URL 重写在函数最开始执行，确保缓存基于重写后的 URL
 - airead 策略匹配使用重写后的 URL
 - `browse_url` 函数本身不需要修改
+- `fetch_pattern_impl` 的集成方式与 `fetch_page_impl` 相同，也在最开始调用 URL 重写
 
 ### 规则格式
 
@@ -529,7 +530,7 @@ See [URL Rewrite Configuration](docs/url-rewrite-configuration.md) for details.
 1. 创建 `_url_rewriter.py` 模块
 2. 创建 `_default_rewrite_rules.py` 内置规则
 3. 扩展 Config 类
-4. 集成到 `_scrapling.py`
+4. 集成到 `_fetcher.py`（在 `fetch_page_impl` 和 `fetch_pattern_impl` 中）
 5. 添加启动参数解析（`mcp.py`）
 
 ### 阶段 2: 测试
