@@ -68,6 +68,9 @@ class Config:
     _markdown_converter: str = "markitdown"  # Default converter
     _rules_config_path: Optional[Path] = None  # airead 规则配置路径
     _default_format: str = "markdown"  # 默认输出格式
+    _url_rewrite_config_path: Optional[Path] = None
+    _url_rewriter: Optional['URLRewriter'] = None
+    _disable_url_rewrite: bool = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -158,6 +161,37 @@ class Config:
             raise ValueError(f"Invalid format '{format}'. Must be one of: {valid_formats}")
         self._default_format = format
 
+    @property
+    def url_rewrite_config_path(self) -> Optional[Path]:
+        """Get the URL rewrite configuration file path"""
+        return self._url_rewrite_config_path
+
+    def set_url_rewrite_config_path(self, path: Path | str | None) -> None:
+        """Set the URL rewrite configuration file path"""
+        if path is None:
+            self._url_rewrite_config_path = None
+        elif isinstance(path, str):
+            self._url_rewrite_config_path = Path(path)
+        else:
+            self._url_rewrite_config_path = path
+
+    @property
+    def url_rewriter(self) -> 'URLRewriter':
+        """Get or create the URL rewriter instance"""
+        if self._url_rewriter is None:
+            from scrapling_fetch_mcp._url_rewriter import URLRewriter
+            self._url_rewriter = URLRewriter(self._url_rewrite_config_path)
+        return self._url_rewriter
+
+    @property
+    def disable_url_rewrite(self) -> bool:
+        """Check if URL rewrite is disabled"""
+        return self._disable_url_rewrite
+
+    def set_disable_url_rewrite(self, disable: bool) -> None:
+        """Set whether to disable URL rewrite"""
+        self._disable_url_rewrite = disable
+
     def get_effective_mode(self, requested_mode: str) -> str:
         """
         Get the effective mode by comparing requested mode with minimum mode.
@@ -218,3 +252,13 @@ def init_config_from_env() -> None:
             config.set_default_format(env_default_format)
         except ValueError:
             pass  # Invalid value, use default
+
+    # Load url_rewrite_config_path from environment
+    env_url_rewrite_config = getenv("SCRAPLING_URL_REWRITE_CONFIG", "")
+    if env_url_rewrite_config:
+        config.set_url_rewrite_config_path(env_url_rewrite_config)
+
+    # Load disable_url_rewrite from environment
+    env_disable_url_rewrite = getenv("SCRAPLING_DISABLE_URL_REWRITE", "").lower()
+    if env_disable_url_rewrite in ('true', '1', 'yes'):
+        config.set_disable_url_rewrite(True)
