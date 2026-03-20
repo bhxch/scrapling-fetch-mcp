@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from functools import reduce
@@ -17,6 +18,8 @@ from scrapling_fetch_mcp._content_saver import ContentSaver
 from scrapling_fetch_mcp._url_matcher import URLMatcher
 from scrapling_fetch_mcp._strategy_factory import StrategyFactory
 from scrapling_fetch_mcp._markdown_postprocessor import postprocess_markdown
+
+logger = logging.getLogger("scrapling_fetch_mcp")
 
 
 def _convert_with_markitdown(html: str) -> str:
@@ -164,6 +167,13 @@ async def fetch_page_impl(
     save_content: bool = False,
     scraping_dir: Optional[Path] = None,
 ) -> str:
+    # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
+    if not config.disable_url_rewrite:
+        original_url = url
+        url = config.url_rewriter.rewrite(url)
+        if url != original_url:
+            logger.debug(f"URL rewritten: {original_url} → {url}")
+
     effective_mode = config.get_effective_mode(mode)
 
     # Setup content saver if needed
@@ -217,6 +227,13 @@ async def fetch_pattern_impl(
     max_length: int,
     context_chars: int,
 ) -> str:
+    # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
+    if not config.disable_url_rewrite:
+        original_url = url
+        url = config.url_rewriter.rewrite(url)
+        if url != original_url:
+            logger.debug(f"URL rewritten: {original_url} → {url}")
+
     effective_mode = config.get_effective_mode(mode)
 
     # Check cache first
