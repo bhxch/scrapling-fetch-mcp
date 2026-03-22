@@ -262,12 +262,16 @@ url_rules:
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SCRAPLING_RULES_CONFIG` | Path to custom rules YAML | Built-in rules |
-| `SCRAPLING_MIN_MODE` | Minimum fetch mode | `stealth` |
-| `SCRAPLING_CACHE_TTL` | Cache TTL (seconds) | `300` |
-| `SCRAPLING_MARKDOWN_CONVERTER` | Markdown converter | `markitdown` |
+| Variable | CLI Equivalent | Description | Default |
+|----------|---------------|-------------|---------|
+| `SCRAPLING_MIN_MODE` | `--min-mode` | Minimum fetching mode (`basic`, `stealth`, `max-stealth`) | `stealth` |
+| `SCRAPLING_CACHE_TTL` | `--cache-ttl` | Page cache TTL in seconds. Set to `0` to disable | `300` |
+| `SCRAPLING_DIR` | `--scraping-dir` | Default directory for saved content | `.temp/scrapling/` |
+| `SCRAPLING_MARKDOWN_CONVERTER` | `--markdown-converter` | Markdown converter (`markitdown` or `markdownify`) | `markitdown` |
+| `SCRAPLING_RULES_CONFIG` | `--rules-config` | Path to custom airead URL routing rules YAML | Built-in rules |
+| `SCRAPLING_DEFAULT_FORMAT` | `--default-format` | Default output format (`airead`, `markdown`, `html`) | `markdown` |
+| `SCRAPLING_DISABLE_URL_REWRITE` | `--disable-url-rewrite` | Disable automatic URL rewriting | `false` |
+| `SCRAPLING_URL_REWRITE_CONFIG` | `--url-rewrite-config` | Path to custom URL rewrite rules YAML | — |
 
 ## Configuration Priority
 

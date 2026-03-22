@@ -54,8 +54,8 @@ After updating the config, restart Claude Desktop.
 
 This MCP server provides two tools that Claude can use automatically when you ask it to fetch web content:
 
-- **Page fetching**: Retrieves complete web pages with support for pagination
-- **Pattern extraction**: Finds and extracts specific content using regex patterns
+- **`s_fetch_page`**: Retrieves complete web pages with pagination support
+- **`s_fetch_pattern`**: Finds and extracts specific content using regex patterns
 
 The AI decides which tool to use based on your request. You just ask naturally:
 
@@ -64,6 +64,66 @@ The AI decides which tool to use based on your request. You just ask naturally:
 "Find all mentions of 'authentication' on that page"
 "Get me the installation instructions from their homepage"
 ```
+
+## Parameters Reference
+
+### `s_fetch_page` — Fetch Complete Pages
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | `str` | *(required)* | The URL to fetch |
+| `mode` | `str` | `"basic"` | Fetching mode: `basic`, `stealth`, `max-stealth`. Effective mode is `max(requested, server_min_mode)` |
+| `format` | `str` | `"markdown"` | Output format: `airead` (AI-optimized), `markdown`, `html`. Defaults to server `--default-format` setting |
+| `max_length` | `int` | `8000` | Maximum number of characters to return |
+| `start_index` | `int` | `0` | Start returning content from this character position (for paginating large pages) |
+| `save_content` | `bool` | `false` | Save complete page (HTML/Markdown + images) to local filesystem |
+| `scraping_dir` | `str` | `".temp/scrapling/"` | Directory path for saved content |
+
+### `s_fetch_pattern` — Extract by Regex
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | `str` | *(required)* | The URL to fetch |
+| `search_pattern` | `str` | *(required)* | Regular expression to search for in the page content |
+| `mode` | `str` | `"basic"` | Fetching mode: `basic`, `stealth`, `max-stealth` |
+| `format` | `str` | `"markdown"` | Output format: `markdown`, `html`. Note: `airead` is automatically converted to `markdown` for this tool |
+| `max_length` | `int` | `8000` | Maximum number of characters to return |
+| `context_chars` | `int` | `200` | Number of characters to include before and after each regex match |
+
+### Server Configuration (CLI Arguments & Environment Variables)
+
+These settings are configured when starting the MCP server, either via CLI arguments or environment variables. CLI args take priority over environment variables.
+
+| CLI Argument | Environment Variable | Type | Default | Description |
+|--------------|---------------------|------|---------|-------------|
+| `--min-mode` | `SCRAPLING_MIN_MODE` | `str` | `"stealth"` | Minimum fetching mode. All requests use at least this level, preventing redundant retries |
+| `--cache-ttl` | `SCRAPLING_CACHE_TTL` | `int` | `300` | Page cache TTL in seconds. Set to `0` to disable |
+| `--scraping-dir` | `SCRAPLING_DIR` | `str` | `".temp/scrapling/"` | Default directory for saved content |
+| `--markdown-converter` | `SCRAPLING_MARKDOWN_CONVERTER` | `str` | `"markitdown"` | Markdown converter: `markitdown` or `markdownify` |
+| `--rules-config` | `SCRAPLING_RULES_CONFIG` | `str` | — | Path to custom airead URL routing rules YAML file |
+| `--default-format` | `SCRAPLING_DEFAULT_FORMAT` | `str` | `"markdown"` | Default output format: `airead`, `markdown`, or `html` |
+| `--disable-url-rewrite` | `SCRAPLING_DISABLE_URL_REWRITE` | `bool` | `false` | Disable automatic URL rewriting |
+| `--url-rewrite-config` | `SCRAPLING_URL_REWRITE_CONFIG` | `str` | — | Path to custom URL rewrite rules YAML file |
+
+## Output Format: airead
+
+The `airead` format provides AI-optimized content extraction, automatically removing navigation bars, ads, sidebars, and other non-essential elements. This reduces token usage by 30-50% while preserving >90% of core content.
+
+airead uses **intelligent URL-based routing** to select the best extraction strategy for each website type:
+
+| Strategy | Best For | Description |
+|----------|----------|-------------|
+| `dual` | General use | Runs 3 extractors (trafilatura + readability + scrapling), selects best result |
+| `search_engine` | Google, Bing, DuckDuckGo | Optimized for search result pages |
+| `developer_platform` | GitHub, GitLab, StackOverflow | Preserves code blocks, tables, and API docs |
+| `documentation` | MDN, ReadTheDocs, etc. | Optimized for technical documentation |
+| `trafilatura` | News, blogs, articles | Fast general-purpose extraction |
+| `readability` | Complex article layouts | Firefox Reader View algorithm |
+| `scrapling` | Simple pages | Built-in Markdown conversion |
+
+> **Note**: airead is only supported by `s_fetch_page`. When used with `s_fetch_pattern`, it automatically falls back to `markdown`.
+
+See [airead Format Guide](docs/airead-format-guide.md) for details on custom strategies and URL routing rules.
 
 ## Protection Modes
 
