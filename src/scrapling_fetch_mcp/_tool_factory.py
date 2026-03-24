@@ -44,16 +44,16 @@ def build_tool_function(
         if cfg["feature"] is None or cfg["feature"] in enabled_features:
             enabled_params.append(name)
 
-    # 2. Sort: params without defaults first, then params with defaults
+    # 2. Sort: required params first, then optional params
     #    (Python requires positional params before keyword params)
-    enabled_params.sort(key=lambda n: param_configs[n]["default"] is not None)
+    enabled_params.sort(key=lambda n: not param_configs[n]["required"])
 
     # 3. Build signature with TYPE ANNOTATIONS
     sig_parts = []
     for name in enabled_params:
         cfg = param_configs[name]
         type_str = _TYPE_MAP.get(cfg["type"], "str")
-        if cfg["default"] is not None:
+        if not cfg["required"]:
             sig_parts.append(f"{name}: {type_str} = {repr(cfg['default'])}")
         else:
             sig_parts.append(f"{name}: {type_str}")
