@@ -30,26 +30,31 @@
 - Create: `src/scrapling_fetch_mcp/_features.py`
 - Test: `tests/test_features.py`
 
-- [ ] **Step 1: 创建 `_features.py`**
-
-创建 `src/scrapling_fetch_mcp/_features.py`，内容参照设计文档 spec 中的「特性注册表」和「工具描述模板」章节。包含：
-- `FEATURES` dict：4 个特性定义
-- `TOOL_PARAMS` dict：s_fetch_page 和 s_fetch_pattern 的参数元数据
-- `S_FETCH_PAGE_DOCSTRING` 和 `S_FETCH_PATTERN_DOCSTRING`：基础 docstring 模板
-
-- [ ] **Step 2: 编写注册表一致性测试**
+- [ ] **Step 1: 编写注册表一致性测试**
 
 创建 `tests/test_features.py`，包含 `TestFeatureRegistry` 类：
 - `test_all_feature_references_valid`：TOOL_PARAMS 中引用的 feature 都在 FEATURES 中
 - `test_each_tool_has_core_params`：每个工具至少有一个 core 参数
 - `test_all_params_have_required_fields`：每个参数都有 type/required/default/feature/description
 
-- [ ] **Step 3: 运行测试验证通过**
+- [ ] **Step 2: 运行测试验证失败**
+
+Run: `pytest tests/test_features.py -v`
+Expected: FAIL（ModuleNotFoundError）
+
+- [ ] **Step 3: 创建 `_features.py`**
+
+创建 `src/scrapling_fetch_mcp/_features.py`，内容参照设计文档 spec 中的「特性注册表」和「工具描述模板」章节。包含：
+- `FEATURES` dict：4 个特性定义
+- `TOOL_PARAMS` dict：s_fetch_page 和 s_fetch_pattern 的参数元数据
+- `S_FETCH_PAGE_DOCSTRING` 和 `S_FETCH_PATTERN_DOCSTRING`：基础 docstring 模板
+
+- [ ] **Step 4: 运行测试验证通过**
 
 Run: `pytest tests/test_features.py -v`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/scrapling_fetch_mcp/_features.py tests/test_features.py
@@ -66,7 +71,7 @@ git commit -m "feat: add feature registry for dynamic tool parameter visibility"
 
 - [ ] **Step 1: 编写 feature 解析测试**
 
-在 `tests/test_features.py` 中添加 `TestResolveFeatures` 类：
+在 `tests/test_features.py` 中添加 `TestResolveFeatures` 类，每个测试在 `setup_method` 中重置 Config 单例状态（`config._enabled_features = set()`、`config._disable_features_raw = []`、`config._enable_features_raw = []`）：
 - `test_defaults_match_spec`：默认值与 spec 一致
 - `test_disable_overrides_default`：disable 覆盖默认值
 - `test_enable_overrides_default`：enable 覆盖默认值
@@ -104,6 +109,32 @@ Expected: ALL PASS
 ```bash
 git add src/scrapling_fetch_mcp/_config.py tests/test_features.py
 git commit -m "feat(config): add feature resolution with CLI/env support"
+```
+
+---
+
+### Task 2b: 环境变量集成测试
+
+**Files:**
+- Create: `tests/test_config_features_env.py`
+
+- [ ] **Step 1: 编写环境变量测试**
+
+创建 `tests/test_config_features_env.py`，使用 `monkeypatch` 设置环境变量。每个测试在 `setup_method` 中重置 Config 单例状态：
+- `test_disable_features_env_var`：设置 `SCRAPLING_DISABLE_FEATURES=save`，调用 `init_config_from_env()`，验证 `_disable_features_raw` 为 `["save"]`
+- `test_enable_features_env_var`：设置 `SCRAPLING_ENABLE_FEATURES=save`，验证 `_enable_features_raw` 为 `["save"]`
+- `test_features_env_and_cli_merged`：设置环境变量 + 调用 `resolve_features()` 合并 CLI 列表，验证结果正确
+
+- [ ] **Step 2: 运行测试验证通过**
+
+Run: `pytest tests/test_config_features_env.py -v`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tests/test_config_features_env.py
+git commit -m "test: add env var integration tests for feature control"
 ```
 
 ---
@@ -215,7 +246,8 @@ git commit -m "feat(fetcher): add middleware wrapper functions for dynamic tool 
 关键改动（参照 spec 中「mcp.py 改动」章节）：
 
 1. 移除 `@mcp.tool()` 装饰器和 `s_fetch_page`、`s_fetch_pattern` 函数定义
-2. 添加 imports：
+2. 移除不再使用的 import（`from traceback import format_exc`、`from pathlib import Path`）
+3. 添加 imports：
    - `from scrapling_fetch_mcp._features import TOOL_PARAMS, FEATURES, S_FETCH_PAGE_DOCSTRING, S_FETCH_PATTERN_DOCSTRING`
    - `from scrapling_fetch_mcp._tool_factory import build_tool_function`
    - 修改 `_fetcher` import 为 `fetch_page_wrapper, fetch_pattern_wrapper`
@@ -265,6 +297,7 @@ git commit -m "fix: address manual verification findings"
 **Files:**
 - Modify: `README.md`
 - Modify: `docs/configuration.md`（如存在）
+- Modify: `MCP_CONFIG_EXAMPLES.md`
 
 - [ ] **Step 1: 在 README 中添加 Feature Control 章节**
 
@@ -274,9 +307,13 @@ git commit -m "fix: address manual verification findings"
 
 添加 feature control 配置说明和 token 节省参考表。
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: 更新 MCP_CONFIG_EXAMPLES.md**
+
+添加 Feature Control 配置示例（默认配置、启用 save、禁用多个 feature）。
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add README.md docs/configuration.md
+git add README.md docs/configuration.md MCP_CONFIG_EXAMPLES.md
 git commit -m "docs: add feature control documentation for token optimization"
 ```
