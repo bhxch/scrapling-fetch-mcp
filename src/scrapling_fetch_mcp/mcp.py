@@ -1,106 +1,31 @@
 from argparse import ArgumentParser
 from logging import getLogger
-from traceback import format_exc
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from scrapling_fetch_mcp._config import config, init_config_from_env
-from scrapling_fetch_mcp._fetcher import (
-    fetch_page_impl,
-    fetch_pattern_impl,
+from scrapling_fetch_mcp._features import (
+    FEATURES,
+    TOOL_PARAMS,
+    S_FETCH_PAGE_DOCSTRING,
+    S_FETCH_PATTERN_DOCSTRING,
 )
+from scrapling_fetch_mcp._tool_factory import build_tool_function
+from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
 
 mcp = FastMCP("scrapling-fetch-mcp")
 
 
-@mcp.tool()
-async def s_fetch_page(
-    url: str,
-    mode: str = "basic",
-    format: str = None,
-    max_length: int = 8000,
-    start_index: int = 0,
-    save_content: bool = False,
-    scraping_dir: str = ".temp/scrapling/",
-) -> str:
-    """Fetches a complete web page with pagination support. Retrieves content from websites with bot-detection avoidance. Content is returned as 'METADATA: {json}\\n\\n[content]' where metadata includes length information and truncation status.
-
-    IMPORTANT:
-    - Use format='airead' for AI-optimized content extraction (removes navigation, ads, etc., 30-50% token reduction)
-    - Use format='markdown' for standard markdown conversion
-    - Use format='html' only when you need raw HTML structure
-
-    The airead format uses intelligent content extraction with URL-based routing to specialized strategies for different website types (search engines, documentation, developer platforms, etc.).
-
-    Args:
-        url: URL to fetch
-        mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (airead, markdown, or html). Use airead for AI-optimized extraction, markdown for standard conversion, html only for structure analysis. Defaults to server's default format setting.
-        max_length: Maximum number of characters to return.
-        start_index: On return output starting at this character index, useful if a previous fetch was truncated and more content is required.
-        save_content: If True, save complete page content (HTML/Markdown + images) to local filesystem for offline viewing.
-        scraping_dir: Directory path for saved content (relative or absolute). Default: .temp/scrapling/
-    """
-    try:
-        # Use configured default format if not specified
-        effective_format = format if format is not None else config.default_format
-        scraping_path = Path(scraping_dir)
-
-        result = await fetch_page_impl(
-            url,
-            mode,
-            effective_format,
-            max_length,
-            start_index,
-            save_content=save_content,
-            scraping_dir=scraping_path,
-        )
-        return result
-    except Exception as e:
-        logger = getLogger("scrapling_fetch_mcp")
-        logger.error("DETAILED ERROR IN s_fetch_page: %s", str(e))
-        logger.error("TRACEBACK: %s", format_exc())
-        raise
-
-
-@mcp.tool()
-async def s_fetch_pattern(
-    url: str,
-    search_pattern: str,
-    mode: str = "basic",
-    format: str = None,
-    max_length: int = 8000,
-    context_chars: int = 200,
-) -> str:
-    """Extracts content matching regex patterns from web pages. Retrieves specific content from websites with bot-detection avoidance. Returns matched content as 'METADATA: {json}\\n\\n[content]' where metadata includes match statistics and truncation information. Each matched content chunk is delimited with '॥๛॥' and prefixed with '[Position: start-end]' indicating its byte position in the original document, allowing targeted follow-up requests with s-fetch-page using specific start_index values.
-
-    IMPORTANT: Use format='markdown' for reading or extracting content. Only use format='html' when you specifically need the raw HTML structure.
-
-    Args:
-        url: URL to fetch
-        search_pattern: Regular expression pattern to search for in the content
-        mode: Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.
-        format: Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis. Defaults to server's default format setting (airead will be converted to markdown).
-        max_length: Maximum number of characters to return.
-        context_chars: Number of characters to include before and after each match
-    """
-    try:
-        # Use configured default format if not specified
-        effective_format = format if format is not None else config.default_format
-        # s_fetch_pattern does not support airead, fallback to markdown
-        if effective_format == "airead":
-            effective_format = "markdown"
-
-        result = await fetch_pattern_impl(
-            url, search_pattern, mode, effective_format, max_length, context_chars
-        )
-        return result
-    except Exception as e:
-        logger = getLogger("scrapling_fetch_mcp")
-        logger.error("DETAILED ERROR IN s_fetch_pattern: %s", str(e))
-        logger.error("TRACEBACK: %s", format_exc())
-        raise
+def _register_tool(name, param_configs, base_docstring, impl_func):
+    """Build a dynamic tool function and register it with FastMCP."""
+    func = build_tool_function(
+        tool_name=name,
+        param_configs=param_configs,
+        enabled_features=config.enabled_features,
+        base_docstring=base_docstring,
+        impl_func=impl_func,
+    )
+    mcp.tool()(func)
 
 
 def run_server():
@@ -131,7 +56,7 @@ def run_server():
         help="Default directory for saving scraped content (HTML + images). "
         "Can be overridden per-request with scraping_dir parameter. "
         "Default: .temp/scrapling/ "
-        "Can also be set via SCRAPING_DIR environment variable.",
+        "Can also be set via SCRAPLING_DIR environment variable.",
     )
     parser.add_argument(
         "--markdown-converter",
@@ -169,6 +94,22 @@ def run_server():
         default=None,
         help="Path to YAML file with custom URL rewrite rules.",
     )
+    parser.add_argument(
+        "--disable-features",
+        type=str,
+        default="",
+        help="Comma-separated list of features to disable. "
+        "Available features: stealth, format, pagination, save. "
+        "Can also be set via SCRAPLING_DISABLE_FEATURES environment variable.",
+    )
+    parser.add_argument(
+        "--enable-features",
+        type=str,
+        default="",
+        help="Comma-separated list of features to enable. "
+        "Available features: stealth, format, pagination, save. "
+        "Can also be set via SCRAPLING_ENABLE_FEATURES environment variable.",
+    )
     args = parser.parse_args()
 
 
@@ -200,6 +141,13 @@ def run_server():
     if args.url_rewrite_config:
         config.set_url_rewrite_config_path(args.url_rewrite_config)
 
+    # Resolve features (merge env raw values + CLI args, call once)
+    disable_cli_list = [f.strip() for f in args.disable_features.split(",") if f.strip()]
+    enable_cli_list = [f.strip() for f in args.enable_features.split(",") if f.strip()]
+    disable_list = config._disable_features_raw + disable_cli_list
+    enable_list = config._enable_features_raw + enable_cli_list
+    config.resolve_features(disable_list, enable_list)
+
     # Log the configuration
     logger = getLogger("scrapling_fetch_mcp")
     logger.info(f"Minimum mode set to: {config.min_mode}")
@@ -208,6 +156,25 @@ def run_server():
     logger.info(f"Markdown converter set to: {config.markdown_converter}")
     logger.info(f"Default format set to: {config.default_format}")
     logger.info(f"URL rewrite: {'disabled' if config.disable_url_rewrite else 'enabled'}")
+
+    # Log feature status
+    all_features = set(FEATURES.keys())
+    logger.info(f"Features enabled: {sorted(config.enabled_features)}")
+    logger.info(f"Features disabled: {sorted(all_features - config.enabled_features)}")
+
+    # Build and register tools dynamically
+    _register_tool(
+        "s_fetch_page",
+        TOOL_PARAMS["s_fetch_page"],
+        S_FETCH_PAGE_DOCSTRING,
+        fetch_page_wrapper,
+    )
+    _register_tool(
+        "s_fetch_pattern",
+        TOOL_PARAMS["s_fetch_pattern"],
+        S_FETCH_PATTERN_DOCSTRING,
+        fetch_pattern_wrapper,
+    )
 
     mcp.run(transport="stdio")
 
