@@ -1,6 +1,7 @@
 """Feature registry consistency tests and feature resolution tests."""
 
 import logging
+from pathlib import Path
 
 from scrapling_fetch_mcp._features import FEATURES, TOOL_PARAMS
 from scrapling_fetch_mcp._config import config
@@ -48,6 +49,23 @@ class TestFeatureRegistry:
                     f"{tool_name}.{param_name} is missing required fields: {missing}"
                 )
 
+    def test_all_features_referenced_by_tools(self):
+        """Every feature in FEATURES must be referenced by at least one tool param.
+
+        This ensures no "dead" feature exists that no tool references.
+        """
+        referenced_features = set()
+        for tool_name, params in TOOL_PARAMS.items():
+            for param_name, param_def in params.items():
+                feature = param_def["feature"]
+                if feature is not None:
+                    referenced_features.add(feature)
+        all_features = set(FEATURES.keys())
+        unreferenced = all_features - referenced_features
+        assert not unreferenced, (
+            f"Features not referenced by any tool param: {unreferenced}"
+        )
+
 
 class TestResolveFeatures:
     """Verify Config.resolve_features() behavior."""
@@ -57,6 +75,16 @@ class TestResolveFeatures:
         config._enabled_features = set()
         config._disable_features_raw = []
         config._enable_features_raw = []
+        config._min_mode = "stealth"
+        config._cache_ttl = 300
+        config._scraping_dir = Path(".temp/scrapling/")
+        config._markdown_converter = "markitdown"
+        config._rules_config_path = None
+        config._default_format = "markdown"
+        config._disable_url_rewrite = False
+        config._url_rewrite_config_path = None
+        config._url_rewriter = None
+        config._cache = None
 
     def test_defaults_match_spec(self):
         """resolve_features([], []) should enable stealth, format, pagination."""
@@ -106,3 +134,20 @@ class TestResolveFeatures:
             [], ["stealth", "format", "pagination", "save"]
         )
         assert config.enabled_features == {"stealth", "format", "pagination", "save"}
+
+    def test_duplicate_in_disable_list_handled(self):
+        """Duplicate feature names in the disable list should not cause issues."""
+        config.resolve_features(["stealth", "stealth", "format"], [])
+        assert "stealth" not in config.enabled_features
+        assert "format" not in config.enabled_features
+
+    def test_duplicate_in_enable_list_handled(self):
+        """Duplicate feature names in the enable list should not cause issues."""
+        config.resolve_features([], ["save", "save", "pagination"])
+        assert "save" in config.enabled_features
+        assert "pagination" in config.enabled_features
+
+    def test_duplicate_in_both_lists_priority_still_works(self):
+        """Enable should still win over disable even when duplicates are present."""
+        config.resolve_features(["stealth"], ["stealth", "stealth"])
+        assert "stealth" in config.enabled_features
