@@ -199,9 +199,7 @@ TOOL_PARAMS = {
 
 ```python
 class Config:
-    def __init__(self):
-        ...
-        self._enabled_features: set[str] = set()
+    _enabled_features: set[str] = set()
 
     @property
     def enabled_features(self) -> set[str]:
@@ -236,15 +234,28 @@ class Config:
 
 环境变量初始化扩展（`init_config_from_env`）：
 
+`init_config_from_env` **只存储原始值，不调用 `resolve_features()`**。由 `run_server()` 统一合并 env + CLI 后调用一次 `resolve_features()`，避免重复调用导致配置被重置。
+
 ```python
+class Config:
+    _disable_features_raw: list[str] = []
+    _enable_features_raw: list[str] = []
+
 def init_config_from_env():
     ...
     env_disable_features = getenv("SCRAPLING_DISABLE_FEATURES", "")
     env_enable_features = getenv("SCRAPLING_ENABLE_FEATURES", "")
-    if env_disable_features or env_enable_features:
-        disable_list = [f.strip() for f in env_disable_features.split(",") if f.strip()]
-        enable_list = [f.strip() for f in env_enable_features.split(",") if f.strip()]
-        config.resolve_features(disable_list, enable_list)
+    config._disable_features_raw = [f.strip() for f in env_disable_features.split(",") if f.strip()]
+    config._enable_features_raw = [f.strip() for f in env_enable_features.split(",") if f.strip()]
+```
+
+`run_server()` 中合并 env + CLI 并调用一次 `resolve_features()`：
+
+```python
+    # Merge env raw values with CLI args (CLI takes precedence via order)
+    disable_list = config._disable_features_raw + disable_cli_list
+    enable_list = config._enable_features_raw + enable_cli_list
+    config.resolve_features(disable_list, enable_list)
 ```
 
 ### 动态工具工厂（_tool_factory.py）
@@ -403,6 +414,57 @@ S_FETCH_PATTERN_DOCSTRING = (
 )
 ```
 
+### 中间件包装函数
+
+当前 `s_fetch_page` 和 `s_fetch_pattern` 装饰器函数包含关键中间件逻辑（format 默认值解析、Path 转换、airead 回退、错误处理）。动态工厂生成的函数直接透传参数给 `impl_func`，因此这些逻辑不能丢失。
+
+解决方案：在 `_fetcher.py` 中新增包装函数，包含原有中间件逻辑，作为 `build_tool_function` 的 `impl_func`：
+
+```python
+# _fetcher.py 新增
+
+async def fetch_page_wrapper(
+    url: str, mode: str, format: str, max_length: int, start_index: int,
+    save_content: bool = False, scraping_dir: str = ".temp/scrapling/",
+) -> str:
+    """Wrapper: format resolution, Path conversion, error handling."""
+    try:
+        effective_format = format if format is not None else config.default_format
+        scraping_path = Path(scraping_dir)
+        result = await fetch_page_impl(
+            url, mode, effective_format, max_length, start_index,
+            save_content=save_content, scraping_dir=scraping_path,
+        )
+        return result
+    except Exception as e:
+        logger = getLogger("scrapling_fetch_mcp")
+        logger.error("DETAILED ERROR IN s_fetch_page: %s", str(e))
+        logger.error("TRACEBACK: %s", format_exc())
+        raise
+
+
+async def fetch_pattern_wrapper(
+    url: str, search_pattern: str, mode: str, format: str,
+    max_length: int, context_chars: int = 200,
+) -> str:
+    """Wrapper: format resolution, airead fallback, error handling."""
+    try:
+        effective_format = format if format is not None else config.default_format
+        if effective_format == "airead":
+            effective_format = "markdown"
+        result = await fetch_pattern_impl(
+            url, search_pattern, mode, effective_format, max_length, context_chars
+        )
+        return result
+    except Exception as e:
+        logger = getLogger("scrapling_fetch_mcp")
+        logger.error("DETAILED ERROR IN s_fetch_pattern: %s", str(e))
+        logger.error("TRACEBACK: %s", format_exc())
+        raise
+```
+
+**注意**：`impl_func` 传入的是包装函数（`fetch_page_wrapper`），不是 `fetch_page_impl`。
+
 ### mcp.py 改动
 
 工具注册从模块级别装饰器移入 `run_server()`：
@@ -410,6 +472,7 @@ S_FETCH_PATTERN_DOCSTRING = (
 ```python
 from scrapling_fetch_mcp._features import TOOL_PARAMS
 from scrapling_fetch_mcp._tool_factory import build_tool_function
+from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
 
 def run_server():
     parser = ArgumentParser(...)
@@ -421,9 +484,11 @@ def run_server():
     # Initialize config (existing logic)
     init_config_from_env()
 
-    # Resolve features
-    disable_list = [f.strip() for f in args.disable_features.split(",") if f.strip()]
-    enable_list = [f.strip() for f in args.enable_features.split(",") if f.strip()]
+    # Resolve features (merge env raw values + CLI args, call once)
+    disable_cli_list = [f.strip() for f in args.disable_features.split(",") if f.strip()]
+    enable_cli_list = [f.strip() for f in args.enable_features.split(",") if f.strip()]
+    disable_list = config._disable_features_raw + disable_cli_list
+    enable_list = config._enable_features_raw + enable_cli_list
     config.resolve_features(disable_list, enable_list)
 
     # Log feature status
@@ -431,11 +496,11 @@ def run_server():
     logger.info(f"Features enabled: {sorted(config.enabled_features)}")
     logger.info(f"Features disabled: {sorted(all_features - config.enabled_features)}")
 
-    # Build and register tools dynamically
+    # Build and register tools dynamically (use wrappers as impl_func)
     _register_tool("s_fetch_page", TOOL_PARAMS["s_fetch_page"],
-                   S_FETCH_PAGE_DOCSTRING, fetch_page_impl)
+                   S_FETCH_PAGE_DOCSTRING, fetch_page_wrapper)
     _register_tool("s_fetch_pattern", TOOL_PARAMS["s_fetch_pattern"],
-                   S_FETCH_PATTERN_DOCSTRING, fetch_pattern_impl)
+                   S_FETCH_PATTERN_DOCSTRING, fetch_pattern_wrapper)
 
     # ... existing logging ...
     mcp.run(transport="stdio")
@@ -468,7 +533,7 @@ def _register_tool(name, param_configs, base_docstring, impl_func):
 | `src/scrapling_fetch_mcp/_tool_factory.py` | 新增 | 动态函数工厂 + docstring 构建 |
 | `src/scrapling_fetch_mcp/mcp.py` | 修改 | 移除 @mcp.tool() 装饰器；在 run_server() 中动态注册；新增 CLI 参数 |
 | `src/scrapling_fetch_mcp/_config.py` | 修改 | 新增 enabled_features 属性 + resolve_features() + 环境变量支持 |
-| `src/scrapling_fetch_mcp/_fetcher.py` | 不变 | 实现函数签名不变，禁用参数由工厂传入默认值 |
+| `src/scrapling_fetch_mcp/_fetcher.py` | 修改 | 新增 fetch_page_wrapper / fetch_pattern_wrapper 包装函数，包含中间件逻辑 |
 
 ## Token 节省分析
 
