@@ -1,9 +1,12 @@
 """Global configuration for scrapling-fetch-mcp"""
 
+from logging import getLogger
 from os import getenv
 from time import time
 from typing import Any, Optional
 from pathlib import Path
+
+from scrapling_fetch_mcp._features import FEATURES
 
 # Mode hierarchy: basic < stealth < max-stealth
 MODE_LEVELS = {
@@ -71,6 +74,9 @@ class Config:
     _url_rewrite_config_path: Optional[Path] = None
     _url_rewriter: Optional['URLRewriter'] = None
     _disable_url_rewrite: bool = False
+    _enabled_features: set[str] = set()
+    _disable_features_raw: list[str] = []
+    _enable_features_raw: list[str] = []
 
     def __new__(cls):
         if cls._instance is None:
@@ -193,6 +199,34 @@ class Config:
         """Set whether to disable URL rewrite"""
         self._disable_url_rewrite = disable
 
+    @property
+    def enabled_features(self) -> set[str]:
+        """Get the set of enabled feature names"""
+        return self._enabled_features
+
+    def resolve_features(self, disable: list[str], enable: list[str]) -> None:
+        """
+        Resolve enabled features from recommended defaults + CLI/env overrides.
+        Priority: enable > disable > recommended defaults.
+        Unknown feature names are logged as warnings and ignored.
+        """
+        logger = getLogger("scrapling_fetch_mcp")
+        all_known = set(FEATURES.keys())
+
+        # Validate
+        for f in set(disable) | set(enable):
+            if f not in all_known:
+                logger.warning(f"Unknown feature '{f}', ignoring")
+
+        # Start from recommended defaults
+        enabled = {f for f, cfg in FEATURES.items() if cfg["default"] == "enabled"}
+
+        # Apply overrides
+        enabled -= set(disable) & all_known
+        enabled |= set(enable) & all_known
+
+        self._enabled_features = enabled
+
     def get_effective_mode(self, requested_mode: str) -> str:
         """
         Get the effective mode by comparing requested mode with minimum mode.
@@ -263,3 +297,9 @@ def init_config_from_env() -> None:
     env_disable_url_rewrite = getenv("SCRAPLING_DISABLE_URL_REWRITE", "").lower()
     if env_disable_url_rewrite in ('true', '1', 'yes'):
         config.set_disable_url_rewrite(True)
+
+    # Note: only store raw values, do NOT call resolve_features() here
+    env_disable_features = getenv("SCRAPLING_DISABLE_FEATURES", "")
+    env_enable_features = getenv("SCRAPLING_ENABLE_FEATURES", "")
+    config._disable_features_raw = [f.strip() for f in env_disable_features.split(",") if f.strip()]
+    config._enable_features_raw = [f.strip() for f in env_enable_features.split(",") if f.strip()]
