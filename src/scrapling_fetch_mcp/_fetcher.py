@@ -3,10 +3,11 @@ import os
 import tempfile
 from functools import reduce
 from json import dumps
+from pathlib import Path
 from re import compile
 from re import error as re_error
+from traceback import format_exc
 from typing import Optional
-from pathlib import Path
 
 from bs4 import BeautifulSoup
 from markitdown import MarkItDown
@@ -266,3 +267,52 @@ async def fetch_pattern_impl(
         original_length, len(truncated_content), is_truncated, None, match_count
     )
     return f"METADATA: {metadata_json}\n\n{truncated_content}"
+
+
+async def fetch_page_wrapper(
+    url: str,
+    mode: str,
+    format: str,
+    max_length: int,
+    start_index: int,
+    save_content: bool = False,
+    scraping_dir: str = ".temp/scrapling/",
+) -> str:
+    """Wrapper: format resolution, Path conversion, error handling."""
+    try:
+        effective_format = format if format is not None else config.default_format
+        scraping_path = Path(scraping_dir)
+        result = await fetch_page_impl(
+            url, mode, effective_format, max_length, start_index,
+            save_content=save_content, scraping_dir=scraping_path,
+        )
+        return result
+    except Exception as e:
+        logger = logging.getLogger("scrapling_fetch_mcp")
+        logger.error("DETAILED ERROR IN s_fetch_page: %s", str(e))
+        logger.error("TRACEBACK: %s", format_exc())
+        raise
+
+
+async def fetch_pattern_wrapper(
+    url: str,
+    search_pattern: str,
+    mode: str,
+    format: str,
+    max_length: int,
+    context_chars: int = 200,
+) -> str:
+    """Wrapper: format resolution, airead fallback, error handling."""
+    try:
+        effective_format = format if format is not None else config.default_format
+        if effective_format == "airead":
+            effective_format = "markdown"
+        result = await fetch_pattern_impl(
+            url, search_pattern, mode, effective_format, max_length, context_chars
+        )
+        return result
+    except Exception as e:
+        logger = logging.getLogger("scrapling_fetch_mcp")
+        logger.error("DETAILED ERROR IN s_fetch_pattern: %s", str(e))
+        logger.error("TRACEBACK: %s", format_exc())
+        raise

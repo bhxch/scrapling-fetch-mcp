@@ -101,3 +101,137 @@ async def test_fetch_page_impl_with_save_content(temp_dir):
         call_kwargs = mock_browse.call_args.kwargs
         assert "page_action" in call_kwargs
         assert callable(call_kwargs["page_action"])
+
+
+class TestFetchPageWrapper:
+    """Tests for fetch_page_wrapper middleware function."""
+
+    @pytest.mark.asyncio
+    async def test_format_none_resolves_to_default(self):
+        """When format=None, wrapper should use config.default_format."""
+        from scrapling_fetch_mcp._fetcher import fetch_page_wrapper
+
+        mock_impl = AsyncMock(return_value="METADATA: {} dummy content")
+        mock_config = MagicMock()
+        mock_config.default_format = "airead"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_page_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+        ):
+            await fetch_page_wrapper(
+                url="https://example.com",
+                mode="basic",
+                format=None,
+                max_length=8000,
+                start_index=0,
+            )
+
+        mock_impl.assert_called_once()
+        # format is the 3rd positional arg (index 2) to fetch_page_impl
+        call_args = mock_impl.call_args[0]
+        assert call_args[2] == "airead"
+
+    @pytest.mark.asyncio
+    async def test_format_explicit_not_overridden(self):
+        """When format is explicitly set, wrapper should not override it."""
+        from scrapling_fetch_mcp._fetcher import fetch_page_wrapper
+
+        mock_impl = AsyncMock(return_value="METADATA: {} dummy content")
+        mock_config = MagicMock()
+        mock_config.default_format = "airead"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_page_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+        ):
+            await fetch_page_wrapper(
+                url="https://example.com",
+                mode="basic",
+                format="markdown",
+                max_length=8000,
+                start_index=0,
+            )
+
+        mock_impl.assert_called_once()
+        # format is the 3rd positional arg (index 2) to fetch_page_impl
+        call_args = mock_impl.call_args[0]
+        assert call_args[2] == "markdown"
+
+    @pytest.mark.asyncio
+    async def test_error_handling_preserves_exceptions(self):
+        """Exceptions from impl should be re-raised after logging."""
+        from scrapling_fetch_mcp._fetcher import fetch_page_wrapper
+
+        mock_impl = AsyncMock(side_effect=RuntimeError("fetch failed"))
+        mock_config = MagicMock()
+        mock_config.default_format = "markdown"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_page_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+            pytest.raises(RuntimeError, match="fetch failed"),
+        ):
+            await fetch_page_wrapper(
+                url="https://example.com",
+                mode="basic",
+                format="markdown",
+                max_length=8000,
+                start_index=0,
+            )
+
+
+class TestFetchPatternWrapper:
+    """Tests for fetch_pattern_wrapper middleware function."""
+
+    @pytest.mark.asyncio
+    async def test_airead_fallback_to_markdown(self):
+        """When format=None and config default is airead, should fallback to markdown."""
+        from scrapling_fetch_mcp._fetcher import fetch_pattern_wrapper
+
+        mock_impl = AsyncMock(return_value="METADATA: {} matched content")
+        mock_config = MagicMock()
+        mock_config.default_format = "airead"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_pattern_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+        ):
+            await fetch_pattern_wrapper(
+                url="https://example.com",
+                search_pattern=r"hello",
+                mode="basic",
+                format=None,
+                max_length=8000,
+            )
+
+        mock_impl.assert_called_once()
+        # format is the 4th positional arg (index 3) to fetch_pattern_impl
+        call_args = mock_impl.call_args[0]
+        assert call_args[3] == "markdown"
+
+    @pytest.mark.asyncio
+    async def test_explicit_format_not_fallback(self):
+        """When format is explicitly set, it should not be overridden or fallback."""
+        from scrapling_fetch_mcp._fetcher import fetch_pattern_wrapper
+
+        mock_impl = AsyncMock(return_value="METADATA: {} matched content")
+        mock_config = MagicMock()
+        mock_config.default_format = "airead"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_pattern_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+        ):
+            await fetch_pattern_wrapper(
+                url="https://example.com",
+                search_pattern=r"hello",
+                mode="basic",
+                format="markdown",
+                max_length=8000,
+            )
+
+        mock_impl.assert_called_once()
+        # format is the 4th positional arg (index 3) to fetch_pattern_impl
+        call_args = mock_impl.call_args[0]
+        assert call_args[3] == "markdown"
