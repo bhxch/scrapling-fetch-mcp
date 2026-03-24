@@ -234,3 +234,68 @@ The page cache helps when:
 - Retrying requests without re-fetching
 
 Cache is automatically invalidated after the TTL expires.
+
+## Feature Control Configuration
+
+Feature Control allows hiding unused MCP tool parameters to reduce token consumption per request.
+
+### Default Configuration (No Save Parameters)
+
+By default, the `save` feature is disabled, so `save_content` and `scraping_dir` parameters are hidden from tool definitions:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"]
+    }
+  }
+}
+```
+
+### Enable Save Feature
+
+To make the save functionality available to the AI:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--enable-features", "save"]
+    }
+  }
+}
+```
+
+### Disable Multiple Features for Token Savings
+
+Hide parameters you don't need to minimize per-request token overhead:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--disable-features", "save,pagination"]
+    }
+  }
+}
+```
+
+### Using Environment Variables
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_ENABLE_FEATURES": "save"
+      }
+    }
+  }
+}
+```

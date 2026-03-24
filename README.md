@@ -104,6 +104,38 @@ These settings are configured when starting the MCP server, either via CLI argum
 | `--default-format` | `SCRAPLING_DEFAULT_FORMAT` | `str` | `"markdown"` | Default output format: `airead`, `markdown`, or `html` |
 | `--disable-url-rewrite` | `SCRAPLING_DISABLE_URL_REWRITE` | `bool` | `false` | Disable automatic URL rewriting |
 | `--url-rewrite-config` | `SCRAPLING_URL_REWRITE_CONFIG` | `str` | — | Path to custom URL rewrite rules YAML file |
+| `--disable-features` | `SCRAPLING_DISABLE_FEATURES` | `str` | `""` | Comma-separated features to disable |
+| `--enable-features` | `SCRAPLING_ENABLE_FEATURES` | `str` | `""` | Comma-separated features to enable |
+
+## Feature Control
+
+MCP tool parameters consume tokens in every request. Feature Control allows hiding unused parameters to reduce token consumption.
+
+### Available Features
+
+| Feature | Default | Controls |
+|---------|---------|----------|
+| `stealth` | enabled | `mode` parameter |
+| `format` | enabled | `format` parameter |
+| `pagination` | enabled | `start_index` parameter |
+| `save` | disabled | `save_content`, `scraping_dir` parameters |
+
+### Usage Examples (CLI)
+
+```bash
+# Enable save feature (default is disabled)
+scrapling-fetch-mcp --enable-features save
+
+# Disable multiple features for maximum token savings
+scrapling-fetch-mcp --disable-features save,pagination
+```
+
+### Environment Variables
+
+- `SCRAPLING_DISABLE_FEATURES` — comma-separated features to disable
+- `SCRAPLING_ENABLE_FEATURES` — comma-separated features to enable
+
+> **Note**: `--enable-features` takes priority over `--disable-features`, which takes priority over recommended defaults.
 
 ## Output Format: airead
 

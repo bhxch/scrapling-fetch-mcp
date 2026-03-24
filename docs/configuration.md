@@ -272,6 +272,8 @@ url_rules:
 | `SCRAPLING_DEFAULT_FORMAT` | `--default-format` | Default output format (`airead`, `markdown`, `html`) | `markdown` |
 | `SCRAPLING_DISABLE_URL_REWRITE` | `--disable-url-rewrite` | Disable automatic URL rewriting | `false` |
 | `SCRAPLING_URL_REWRITE_CONFIG` | `--url-rewrite-config` | Path to custom URL rewrite rules YAML | — |
+| `SCRAPLING_DISABLE_FEATURES` | `--disable-features` | Comma-separated features to disable | `""` |
+| `SCRAPLING_ENABLE_FEATURES` | `--enable-features` | Comma-separated features to enable | `""` |
 
 ## Configuration Priority
 
@@ -390,3 +392,41 @@ python3 -c "import yaml; yaml.safe_load(open('custom_rules.yaml'))"
 - Python file has no syntax errors
 - Class name matches exactly
 - Strategy class inherits from `ExtractorStrategy`
+
+## Feature Control
+
+Feature Control allows you to hide unused MCP tool parameters to reduce token consumption. Since every parameter in an MCP tool definition is sent with every request, removing unused parameters directly saves tokens.
+
+### Feature Definitions
+
+| Feature | Default | Controls |
+|---------|---------|----------|
+| `stealth` | enabled | `mode` parameter |
+| `format` | enabled | `format` parameter |
+| `pagination` | enabled | `start_index` parameter |
+| `save` | disabled | `save_content`, `scrapling_dir` parameters |
+
+### Configuration Examples
+
+**CLI:**
+```bash
+# Enable save feature (default is disabled)
+scrapling-fetch-mcp --enable-features save
+
+# Disable multiple features for maximum token savings
+scrapling-fetch-mcp --disable-features save,pagination
+
+# Environment variables
+export SCRAPLING_ENABLE_FEATURES=save
+export SCRAPLING_DISABLE_FEATURES=pagination,format
+```
+
+**Priority:** `--enable-features` > `--disable-features` > recommended defaults
+
+### Token Savings Reference
+
+| Configuration | Estimated Token Savings |
+|--------------|----------------------|
+| Default (save disabled) | ~75-100 tokens/request |
+| Disable pagination | ~125-170 tokens/request |
+| All disabled (core params only) | ~225-310 tokens/request |
