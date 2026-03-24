@@ -4,8 +4,8 @@ import inspect
 
 import pytest
 
-from scrapling_fetch_mcp._features import TOOL_PARAMS, S_FETCH_PAGE_DOCSTRING
-from scrapling_fetch_mcp._tool_factory import build_tool_function
+from scrapling_fetch_mcp._features import TOOL_PARAMS, S_FETCH_PAGE_DOCSTRING, S_FETCH_PATTERN_DOCSTRING
+from scrapling_fetch_mcp._tool_factory import build_tool_function, _build_docstring
 
 
 async def _fake_impl(**kwargs):
@@ -151,24 +151,130 @@ class TestBuildToolFunction:
         assert "url" in param_names
         assert "max_length" in param_names
 
-    def test_only_core_params_when_all_disabled(self):
-        """When all features disabled, only core params remain."""
+
+class TestBuildToolFunctionPattern:
+    """Tests for build_tool_function() with s_fetch_pattern."""
+
+    def test_pattern_full_features_all_params_present(self):
+        """All 6 params present when all features enabled for s_fetch_pattern."""
+        enabled = {"stealth", "format"}
         func = build_tool_function(
-            tool_name="s_fetch_page",
-            param_configs=TOOL_PARAMS["s_fetch_page"],
-            enabled_features=set(),
-            base_docstring=S_FETCH_PAGE_DOCSTRING,
+            tool_name="s_fetch_pattern",
+            param_configs=TOOL_PARAMS["s_fetch_pattern"],
+            enabled_features=enabled,
+            base_docstring=S_FETCH_PATTERN_DOCSTRING,
             impl_func=_fake_impl,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
-        # Core params: url (feature=None), max_length (feature=None)
-        # Feature params should all be absent
-        assert "mode" not in param_names          # stealth
-        assert "format" not in param_names         # format
-        assert "start_index" not in param_names    # pagination
-        assert "save_content" not in param_names   # save
-        assert "scraping_dir" not in param_names   # save
-        # Core params should be present
+        expected = {"url", "search_pattern", "mode", "format", "max_length", "context_chars"}
+        assert param_names == expected
+
+    def test_pattern_stealth_disabled_hides_mode(self):
+        """Disabling stealth hides mode param for s_fetch_pattern."""
+        enabled = {"format"}
+        func = build_tool_function(
+            tool_name="s_fetch_pattern",
+            param_configs=TOOL_PARAMS["s_fetch_pattern"],
+            enabled_features=enabled,
+            base_docstring=S_FETCH_PATTERN_DOCSTRING,
+            impl_func=_fake_impl,
+        )
+        sig = inspect.signature(func)
+        param_names = set(sig.parameters.keys())
+        assert "mode" not in param_names
         assert "url" in param_names
+        assert "search_pattern" in param_names
+        assert "format" in param_names
         assert "max_length" in param_names
+        assert "context_chars" in param_names
+
+    def test_pattern_only_core_when_all_disabled(self):
+        """When all features disabled, only core params remain for s_fetch_pattern."""
+        func = build_tool_function(
+            tool_name="s_fetch_pattern",
+            param_configs=TOOL_PARAMS["s_fetch_pattern"],
+            enabled_features=set(),
+            base_docstring=S_FETCH_PATTERN_DOCSTRING,
+            impl_func=_fake_impl,
+        )
+        sig = inspect.signature(func)
+        param_names = set(sig.parameters.keys())
+        # Core params: url, search_pattern, max_length, context_chars (feature=None)
+        # Feature params: mode (stealth), format (format)
+        assert "mode" not in param_names
+        assert "format" not in param_names
+        assert param_names == {"url", "search_pattern", "max_length", "context_chars"}
+
+    @pytest.mark.asyncio
+    async def test_pattern_delegates_to_impl_with_defaults(self):
+        """Disabled stealth passes mode='basic' as default to impl for s_fetch_pattern."""
+        enabled = {"format"}
+        func = build_tool_function(
+            tool_name="s_fetch_pattern",
+            param_configs=TOOL_PARAMS["s_fetch_pattern"],
+            enabled_features=enabled,
+            base_docstring=S_FETCH_PATTERN_DOCSTRING,
+            impl_func=_fake_impl,
+        )
+        result = await func("https://example.com", "<title>.*</title>", format="markdown")
+        assert result == "test_result"
+        assert len(_fake_impl.calls) == 1
+        call_kwargs = _fake_impl.calls[0]
+        # Disabled stealth param should have default value
+        assert call_kwargs["mode"] == "basic"
+        # Enabled params should be what we passed
+        assert call_kwargs["url"] == "https://example.com"
+        assert call_kwargs["search_pattern"] == "<title>.*</title>"
+        assert call_kwargs["format"] == "markdown"
+
+
+class TestBuildDocstring:
+    """Tests for _build_docstring() helper."""
+
+    def test_empty_params_shows_only_args_header(self):
+        """With no enabled params, only base text and 'Args:' header appear."""
+        result = _build_docstring("base text", [], {})
+        assert "base text" in result
+        assert "Args:" in result
+        # No parameter lines should follow after Args:
+        lines = result.split("\n")
+        args_idx = lines.index("Args:")
+        # Only the base text, empty line, Args:, and nothing after
+        remaining = lines[args_idx + 1:]
+        assert remaining == []
+
+    def test_missing_description_uses_empty_string(self):
+        """Param config without 'description' key does not crash."""
+        param_configs = {
+            "p1": {"type": str, "required": True, "default": None, "feature": None}
+        }
+        result = _build_docstring("base", ["p1"], param_configs)
+        assert "base" in result
+        assert "Args:" in result
+        # p1 should appear but with empty description after the colon
+        assert "p1:" in result
+        # No crash occurred
+
+
+class TestTypeMapFallback:
+    """Tests for _TYPE_MAP fallback behavior."""
+
+    def test_unknown_type_fallback_to_str(self):
+        """Type not in _TYPE_MAP falls back to 'str' annotation."""
+        custom_configs = {
+            "items": {
+                "type": list, "required": False, "default": [],
+                "feature": None, "description": "List of items",
+            },
+        }
+        func = build_tool_function(
+            tool_name="test_tool",
+            param_configs=custom_configs,
+            enabled_features=set(),
+            base_docstring="Test tool",
+            impl_func=_fake_impl,
+        )
+        sig = inspect.signature(func)
+        # list is not in _TYPE_MAP, so it should fall back to str
+        assert sig.parameters["items"].annotation is str
