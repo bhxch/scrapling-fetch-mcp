@@ -128,9 +128,12 @@ class TestFetchPageWrapper:
             )
 
         mock_impl.assert_called_once()
-        # format is the 3rd positional arg (index 2) to fetch_page_impl
-        call_args = mock_impl.call_args[0]
-        assert call_args[2] == "airead"
+        # fetch_page_impl(url, mode, format, max_length, start_index, ...)
+        # Positional: args[0]=url, args[1]=mode, args[2]=format
+        call = mock_impl.call_args
+        assert call.args[0] == "https://example.com"  # url
+        assert call.args[1] == "basic"                 # mode
+        assert call.args[2] == "airead"                # format
 
     @pytest.mark.asyncio
     async def test_format_explicit_not_overridden(self):
@@ -154,9 +157,12 @@ class TestFetchPageWrapper:
             )
 
         mock_impl.assert_called_once()
-        # format is the 3rd positional arg (index 2) to fetch_page_impl
-        call_args = mock_impl.call_args[0]
-        assert call_args[2] == "markdown"
+        # fetch_page_impl(url, mode, format, max_length, start_index, ...)
+        # Positional: args[0]=url, args[1]=mode, args[2]=format
+        call = mock_impl.call_args
+        assert call.args[0] == "https://example.com"  # url
+        assert call.args[1] == "basic"                 # mode
+        assert call.args[2] == "markdown"              # format
 
     @pytest.mark.asyncio
     async def test_error_handling_preserves_exceptions(self):
@@ -179,6 +185,36 @@ class TestFetchPageWrapper:
                 max_length=8000,
                 start_index=0,
             )
+
+    @pytest.mark.asyncio
+    async def test_scraping_dir_converted_to_path(self):
+        """scraping_dir string should be converted to Path before passing to impl."""
+        from scrapling_fetch_mcp._fetcher import fetch_page_wrapper
+
+        mock_impl = AsyncMock(return_value="METADATA: {} dummy content")
+        mock_config = MagicMock()
+        mock_config.default_format = "markdown"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_page_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+        ):
+            await fetch_page_wrapper(
+                url="https://example.com",
+                mode="basic",
+                format="markdown",
+                max_length=8000,
+                start_index=0,
+                save_content=True,
+                scraping_dir="/custom/path/",
+            )
+
+        mock_impl.assert_called_once()
+        # scraping_dir is passed as keyword arg to fetch_page_impl
+        call = mock_impl.call_args
+        assert isinstance(call.kwargs["scraping_dir"], Path)
+        assert call.kwargs["scraping_dir"] == Path("/custom/path/")
+        assert call.kwargs["save_content"] is True
 
 
 class TestFetchPatternWrapper:
@@ -206,9 +242,13 @@ class TestFetchPatternWrapper:
             )
 
         mock_impl.assert_called_once()
-        # format is the 4th positional arg (index 3) to fetch_pattern_impl
-        call_args = mock_impl.call_args[0]
-        assert call_args[3] == "markdown"
+        # fetch_pattern_impl(url, search_pattern, mode, format, max_length, context_chars)
+        # Positional: args[0]=url, args[1]=search_pattern, args[2]=mode, args[3]=format
+        call = mock_impl.call_args
+        assert call.args[0] == "https://example.com"  # url
+        assert call.args[1] == r"hello"               # search_pattern
+        assert call.args[2] == "basic"                # mode
+        assert call.args[3] == "markdown"             # format (fallback from airead)
 
     @pytest.mark.asyncio
     async def test_explicit_format_not_fallback(self):
@@ -232,6 +272,33 @@ class TestFetchPatternWrapper:
             )
 
         mock_impl.assert_called_once()
-        # format is the 4th positional arg (index 3) to fetch_pattern_impl
-        call_args = mock_impl.call_args[0]
-        assert call_args[3] == "markdown"
+        # fetch_pattern_impl(url, search_pattern, mode, format, max_length, context_chars)
+        # Positional: args[0]=url, args[1]=search_pattern, args[2]=mode, args[3]=format
+        call = mock_impl.call_args
+        assert call.args[0] == "https://example.com"  # url
+        assert call.args[1] == r"hello"               # search_pattern
+        assert call.args[2] == "basic"                # mode
+        assert call.args[3] == "markdown"             # format (explicit, no fallback)
+
+    @pytest.mark.asyncio
+    async def test_error_handling_preserves_exceptions(self):
+        """Exceptions from impl should be re-raised after logging."""
+        from scrapling_fetch_mcp._fetcher import fetch_pattern_wrapper
+
+        mock_impl = AsyncMock(side_effect=RuntimeError("test error"))
+        mock_config = MagicMock()
+        mock_config.default_format = "markdown"
+
+        with (
+            patch("scrapling_fetch_mcp._fetcher.fetch_pattern_impl", mock_impl),
+            patch("scrapling_fetch_mcp._fetcher.config", mock_config),
+            pytest.raises(RuntimeError, match="test error"),
+        ):
+            await fetch_pattern_wrapper(
+                url="https://example.com",
+                search_pattern="test",
+                mode="basic",
+                format="markdown",
+                max_length=8000,
+                context_chars=200,
+            )
