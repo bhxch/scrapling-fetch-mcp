@@ -160,7 +160,7 @@ The AI can override the default scraping directory on a per-request basis when s
 
 ## Complete Configuration Example
 
-Combine minimum mode and caching for optimal performance:
+Combine minimum mode, caching, and default format for optimal performance:
 
 ```json
 {
@@ -170,7 +170,9 @@ Combine minimum mode and caching for optimal performance:
       "args": [
         "scrapling-fetch-mcp",
         "--min-mode", "stealth",
-        "--cache-ttl", "600"
+        "--cache-ttl", "600",
+        "--default-format", "airead",
+        "--disable-features", "save"
       ]
     }
   }
@@ -187,7 +189,9 @@ Or with environment variables:
       "args": ["scrapling-fetch-mcp"],
       "env": {
         "SCRAPLING_MIN_MODE": "stealth",
-        "SCRAPLING_CACHE_TTL": "600"
+        "SCRAPLING_CACHE_TTL": "600",
+        "SCRAPLING_DEFAULT_FORMAT": "airead",
+        "SCRAPLING_DISABLE_FEATURES": "save"
       }
     }
   }
@@ -299,3 +303,69 @@ Hide parameters you don't need to minimize per-request token overhead:
   }
 }
 ```
+
+## Default Format Configuration
+
+Set the default output format for all fetch operations:
+
+### Airead as Default (AI-Optimized)
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--default-format", "airead"]
+    }
+  }
+}
+```
+
+Or via environment variable:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp"],
+      "env": {
+        "SCRAPLING_DEFAULT_FORMAT": "airead"
+      }
+    }
+  }
+}
+```
+
+## URL Rewrite Configuration
+
+### Disable URL Rewriting
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--disable-url-rewrite"]
+    }
+  }
+}
+```
+
+### Custom Rewrite Rules
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": [
+        "scrapling-fetch-mcp",
+        "--url-rewrite-config", "/path/to/rewrite-rules.yaml"
+      ]
+    }
+  }
+}
+```
+
+See [URL Rewrite Configuration](docs/url-rewrite-configuration.md) for details on writing custom rules.

@@ -6,15 +6,30 @@ airead is an AI-optimized content extraction format that reduces token usage by 
 
 ## Basic Usage
 
-```python
-# MCP Tool
-await s_fetch_page(
-    url="https://github.com/user/repo",
-    format="airead"  # AI-optimized extraction
-)
+airead is used via the `s_fetch_page` MCP tool:
 
-# CLI
-scrapling-fetch-mcp fetch --format airead "https://example.com"
+```json
+// MCP Tool Call
+{
+  "name": "s_fetch_page",
+  "arguments": {
+    "url": "https://github.com/user/repo",
+    "format": "airead"
+  }
+}
+```
+
+You can also set it as the default format via server configuration:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--default-format", "airead"]
+    }
+  }
+}
 ```
 
 ## Built-in Strategies
@@ -187,12 +202,24 @@ scrapling-fetch-mcp --rules-config /path/to/custom_rules.yaml
 ## Best Practices
 
 ### 1. Use airead by default
-```python
-# ✅ Good
-await s_fetch_page(url, format="airead")
 
-# ❌ Avoid (unless you need raw HTML)
-await s_fetch_page(url, format="markdown")
+Configure the server default format to `airead` so all requests automatically use it:
+
+```json
+{
+  "mcpServers": {
+    "scrapling-fetch": {
+      "command": "uvx",
+      "args": ["scrapling-fetch-mcp", "--default-format", "airead"]
+    }
+  }
+}
+```
+
+Or request it per-call via the `format` parameter:
+
+```
+"Fetch the docs at https://example.com using airead format"
 ```
 
 ### 2. Configure custom rules for specialized sites
@@ -206,13 +233,11 @@ url_rules:
 ```
 
 ### 3. Monitor extraction quality
-```python
-result = await s_fetch_page(url, format="airead")
 
-# Check if content looks reasonable
-if len(result) < 100:
-    # Try with standard markdown
-    result = await s_fetch_page(url, format="markdown")
+If the extracted content seems too short, ask the AI to retry with `markdown` format:
+
+```
+"The airead result seems incomplete, can you fetch it again with markdown format?"
 ```
 
 ## Troubleshooting
@@ -232,34 +257,34 @@ if len(result) < 100:
 ## Examples
 
 ### Extract GitHub README
-```python
-readme = await s_fetch_page(
-    url="https://github.com/user/repo",
-    format="airead"
-)
-# → ~50% token reduction
-# → Preserves: description, features, installation, usage
-# → Removes: stars, forks, navigation, footer
+
 ```
+"Fetch the README from https://github.com/user/repo using airead format"
+```
+
+Result characteristics:
+- ~50% token reduction
+- Preserves: description, features, installation, usage
+- Removes: stars, forks, navigation, footer
 
 ### Extract Python Documentation
-```python
-docs = await s_fetch_page(
-    url="https://docs.python.org/3/library/json.html",
-    format="airead"
-)
-# → ~40% token reduction
-# → Preserves: API docs, examples, parameters
-# → Removes: sidebar navigation, footer links
+
+```
+"Get me the JSON module docs from https://docs.python.org/3/library/json.html"
 ```
 
+Result characteristics:
+- ~40% token reduction
+- Preserves: API docs, examples, parameters
+- Removes: sidebar navigation, footer links
+
 ### Extract Search Results
-```python
-results = await s_fetch_page(
-    url="https://www.google.com/search?q=python",
-    format="airead"
-)
-# → ~40% token reduction
-# → Preserves: result titles, snippets, URLs
-# → Removes: ads, sidebars, pagination
+
 ```
+"Search for 'python web scraping' and get the results using airead format"
+```
+
+Result characteristics:
+- ~40% token reduction
+- Preserves: result titles, snippets, URLs
+- Removes: ads, sidebars, pagination

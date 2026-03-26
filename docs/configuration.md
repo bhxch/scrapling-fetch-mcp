@@ -12,6 +12,11 @@ export SCRAPLING_RULES_CONFIG=/path/to/custom_rules.yaml
 export SCRAPLING_MIN_MODE=stealth
 export SCRAPLING_CACHE_TTL=300
 export SCRAPLING_MARKDOWN_CONVERTER=markitdown
+export SCRAPLING_DEFAULT_FORMAT=airead
+
+# Feature control
+export SCRAPLING_ENABLE_FEATURES=save
+export SCRAPLING_DISABLE_FEATURES=pagination
 ```
 
 ### 2. CLI Parameters
@@ -21,7 +26,9 @@ scrapling-fetch-mcp \
   --rules-config /path/to/custom_rules.yaml \
   --min-mode stealth \
   --cache-ttl 300 \
-  --markdown-converter markitdown
+  --markdown-converter markitdown \
+  --default-format airead \
+  --disable-features save,pagination
 ```
 
 ### 3. Configuration Files
@@ -284,9 +291,9 @@ url_rules:
 Example:
 
 ```bash
-# Built-in default: dual
-export SCRAPLING_DEFAULT_STRATEGY=trafilatura  # Override: trafilatura
-scrapling-fetch-mcp --default-strategy readability  # Final: readability
+# Built-in default: markdown
+export SCRAPLING_DEFAULT_FORMAT=airead  # Override: airead
+scrapling-fetch-mcp --default-format html  # Final: html
 ```
 
 ## Validation

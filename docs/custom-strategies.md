@@ -300,7 +300,7 @@ print(f"Length: {len(result)}")
 
 ## Limitations
 
-1. **Python version**: Strategies must be compatible with Python 3.9+
+1. **Python version**: Strategies must be compatible with Python 3.10+
 2. **Dependencies**: Third-party libraries must be installed separately
 3. **Performance**: Complex strategies may impact extraction speed
 4. **Error handling**: Strategy errors are caught and logged, not propagated
