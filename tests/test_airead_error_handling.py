@@ -11,17 +11,22 @@ from scrapling_fetch_mcp._strategy_factory import StrategyFactory
 
 def test_yaml_parse_error_fallback():
     """Test fallback to built-in rules when YAML parsing fails"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    f = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+    try:
         f.write("invalid: yaml: content:\n  - broken [")
         f.flush()
 
         matcher = URLMatcher(Path(f.name))
         assert matcher.default_strategy == "dual"  # Should use built-in default
+    finally:
+        f.close()
+        Path(f.name).unlink(missing_ok=True)
 
 
 def test_custom_strategy_module_not_found():
     """Test handling of missing custom strategy module"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    f = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
+    try:
         config = {
             'custom_strategies': [{
                 'name': 'test',
@@ -35,6 +40,9 @@ def test_custom_strategy_module_not_found():
         # Should not crash, just log warning
         StrategyFactory.load_custom_strategies(Path(f.name))
         assert 'test' not in StrategyFactory.list_strategies()
+    finally:
+        f.close()
+        Path(f.name).unlink(missing_ok=True)
 
 
 def test_invalid_url_match():
