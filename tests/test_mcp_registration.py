@@ -44,6 +44,7 @@ class TestRegisterTool:
             enabled_features=config.enabled_features,
             base_docstring=base_docstring,
             impl_func=impl_func,
+            config=config,
         )
 
     @patch("scrapling_fetch_mcp.mcp.build_tool_function")

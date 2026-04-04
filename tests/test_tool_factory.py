@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._features import TOOL_PARAMS, S_FETCH_PAGE_DOCSTRING, S_FETCH_PATTERN_DOCSTRING
 from scrapling_fetch_mcp._tool_factory import build_tool_function, _build_docstring, _resolve_default
 
@@ -37,6 +38,7 @@ class TestBuildToolFunction:
             enabled_features=enabled,
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
@@ -54,6 +56,7 @@ class TestBuildToolFunction:
             enabled_features=enabled,
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
@@ -69,6 +72,7 @@ class TestBuildToolFunction:
             enabled_features=enabled,
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         # url: str
@@ -89,6 +93,7 @@ class TestBuildToolFunction:
             enabled_features=enabled,
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         doc = func.__doc__
         # start_index is pagination feature -> should not appear in Args
@@ -108,6 +113,7 @@ class TestBuildToolFunction:
             enabled_features=enabled,
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         doc = func.__doc__
         assert "IMPORTANT" in doc
@@ -122,6 +128,7 @@ class TestBuildToolFunction:
             enabled_features=enabled,
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         result = await func("https://example.com", format="markdown", mode="stealth")
         assert result == "test_result"
@@ -130,7 +137,7 @@ class TestBuildToolFunction:
         # Disabled params should be passed with defaults
         assert call_kwargs["start_index"] == 0
         assert call_kwargs["save_content"] is False
-        assert call_kwargs["scraping_dir"] == ".temp/scrapling/"
+        assert call_kwargs["scraping_dir"] == str(Path(".temp/scrapling/"))
         # Enabled params should be what we passed
         assert call_kwargs["url"] == "https://example.com"
         assert call_kwargs["mode"] == "stealth"
@@ -145,6 +152,7 @@ class TestBuildToolFunction:
             enabled_features=set(),
             base_docstring=S_FETCH_PAGE_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
@@ -165,6 +173,7 @@ class TestBuildToolFunctionPattern:
             enabled_features=enabled,
             base_docstring=S_FETCH_PATTERN_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
@@ -180,6 +189,7 @@ class TestBuildToolFunctionPattern:
             enabled_features=enabled,
             base_docstring=S_FETCH_PATTERN_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
@@ -198,6 +208,7 @@ class TestBuildToolFunctionPattern:
             enabled_features=set(),
             base_docstring=S_FETCH_PATTERN_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
@@ -217,13 +228,14 @@ class TestBuildToolFunctionPattern:
             enabled_features=enabled,
             base_docstring=S_FETCH_PATTERN_DOCSTRING,
             impl_func=_fake_impl,
+            config=config,
         )
         result = await func("https://example.com", "<title>.*</title>", format="markdown")
         assert result == "test_result"
         assert len(_fake_impl.calls) == 1
         call_kwargs = _fake_impl.calls[0]
-        # Disabled stealth param should have default value
-        assert call_kwargs["mode"] == "basic"
+        # Disabled stealth param should have default value from config
+        assert call_kwargs["mode"] == config.min_mode
         # Enabled params should be what we passed
         assert call_kwargs["url"] == "https://example.com"
         assert call_kwargs["search_pattern"] == "<title>.*</title>"
@@ -275,6 +287,7 @@ class TestTypeMapFallback:
             enabled_features=set(),
             base_docstring="Test tool",
             impl_func=_fake_impl,
+            config=config,
         )
         sig = inspect.signature(func)
         # list is not in _TYPE_MAP, so it should fall back to str
