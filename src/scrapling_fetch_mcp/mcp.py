@@ -24,6 +24,7 @@ def _register_tool(name, param_configs, base_docstring, impl_func):
         enabled_features=config.enabled_features,
         base_docstring=base_docstring,
         impl_func=impl_func,
+        config=config,
     )
     mcp.tool()(func)
 
