@@ -25,11 +25,13 @@ TOOL_PARAMS = {
         "mode": {
             "type": str, "required": False, "default": "basic",
             "feature": "stealth",
+            "config_key": "min_mode",
             "description": "Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.",
         },
         "format": {
             "type": str, "required": False, "default": None,
             "feature": "format",
+            "config_key": "default_format",
             "description": "Output format (airead, markdown, or html). Use airead for AI-optimized extraction, markdown for standard conversion, html only for structure analysis. Defaults to server's default format setting.",
         },
         "max_length": {
@@ -50,6 +52,7 @@ TOOL_PARAMS = {
         "scraping_dir": {
             "type": str, "required": False, "default": ".temp/scrapling/",
             "feature": "save",
+            "config_key": "scraping_dir",
             "description": "Directory path for saved content (relative or absolute). Default: .temp/scrapling/",
         },
     },
@@ -67,11 +70,13 @@ TOOL_PARAMS = {
         "mode": {
             "type": str, "required": False, "default": "basic",
             "feature": "stealth",
+            "config_key": "min_mode",
             "description": "Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.",
         },
         "format": {
             "type": str, "required": False, "default": None,
             "feature": "format",
+            "config_key": "default_format",
             "description": "Output format (html or markdown). Use markdown for content reading/extraction, html only for structure analysis. Defaults to server's default format setting (airead will be converted to markdown).",
         },
         "max_length": {
