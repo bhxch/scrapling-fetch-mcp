@@ -327,3 +327,114 @@ class TestResolveDefault:
         cfg = {"type": str, "required": False, "default": "markdown", "feature": None, "config_key": "default_format"}
         mock_config = type("Config", (), {"default_format": None})()
         assert _resolve_default(cfg, mock_config) is None
+
+
+class TestDynamicDefaults:
+    """Tests that config values propagate into generated function signatures."""
+
+    def test_mode_default_reflects_min_mode(self):
+        """When config.min_mode is 'max-stealth', mode default is 'max-stealth'."""
+        config.set_min_mode("max-stealth")
+        try:
+            enabled = {"stealth", "format", "pagination", "save"}
+            func = build_tool_function(
+                tool_name="s_fetch_page",
+                param_configs=TOOL_PARAMS["s_fetch_page"],
+                enabled_features=enabled,
+                base_docstring=S_FETCH_PAGE_DOCSTRING,
+                impl_func=_fake_impl,
+                config=config,
+            )
+            sig = inspect.signature(func)
+            assert sig.parameters["mode"].default == "max-stealth"
+        finally:
+            config.set_min_mode("stealth")
+
+    def test_format_default_reflects_default_format(self):
+        """When config.default_format is 'airead', format default is 'airead'."""
+        config.set_default_format("airead")
+        try:
+            enabled = {"stealth", "format", "pagination", "save"}
+            func = build_tool_function(
+                tool_name="s_fetch_page",
+                param_configs=TOOL_PARAMS["s_fetch_page"],
+                enabled_features=enabled,
+                base_docstring=S_FETCH_PAGE_DOCSTRING,
+                impl_func=_fake_impl,
+                config=config,
+            )
+            sig = inspect.signature(func)
+            assert sig.parameters["format"].default == "airead"
+        finally:
+            config.set_default_format("markdown")
+
+    def test_scraping_dir_default_reflects_config(self):
+        """When config.scraping_dir is a custom Path, scraping_dir default is that path as string."""
+        config.set_scraping_dir("/custom/scrapling")
+        try:
+            enabled = {"stealth", "format", "pagination", "save"}
+            func = build_tool_function(
+                tool_name="s_fetch_page",
+                param_configs=TOOL_PARAMS["s_fetch_page"],
+                enabled_features=enabled,
+                base_docstring=S_FETCH_PAGE_DOCSTRING,
+                impl_func=_fake_impl,
+                config=config,
+            )
+            sig = inspect.signature(func)
+            assert sig.parameters["scraping_dir"].default == "/custom/scrapling"
+        finally:
+            config.set_scraping_dir(".temp/scrapling/")
+
+    def test_no_config_key_uses_static_default(self):
+        """Parameters without config_key use their static default regardless of config."""
+        enabled = {"stealth", "format", "pagination", "save"}
+        func = build_tool_function(
+            tool_name="s_fetch_page",
+            param_configs=TOOL_PARAMS["s_fetch_page"],
+            enabled_features=enabled,
+            base_docstring=S_FETCH_PAGE_DOCSTRING,
+            impl_func=_fake_impl,
+            config=config,
+        )
+        sig = inspect.signature(func)
+        assert sig.parameters["max_length"].default == 8000
+        assert sig.parameters["start_index"].default == 0
+        assert sig.parameters["save_content"].default is False
+
+    @pytest.mark.asyncio
+    async def test_disabled_param_gets_config_default(self):
+        """Disabled params with config_key receive the config value, not static default."""
+        config.set_min_mode("max-stealth")
+        config.set_default_format("airead")
+        try:
+            enabled = {"format"}  # stealth disabled
+            func = build_tool_function(
+                tool_name="s_fetch_page",
+                param_configs=TOOL_PARAMS["s_fetch_page"],
+                enabled_features=enabled,
+                base_docstring=S_FETCH_PAGE_DOCSTRING,
+                impl_func=_fake_impl,
+                config=config,
+            )
+            await func("https://example.com", format="html")
+            call_kwargs = _fake_impl.calls[0]
+            assert call_kwargs["mode"] == "max-stealth"
+        finally:
+            config.set_min_mode("stealth")
+            config.set_default_format("markdown")
+
+    def test_pattern_tool_mode_reflects_min_mode(self):
+        """s_fetch_pattern mode default also reflects config.min_mode."""
+        config.set_min_mode("stealth")
+        enabled = {"stealth", "format"}
+        func = build_tool_function(
+            tool_name="s_fetch_pattern",
+            param_configs=TOOL_PARAMS["s_fetch_pattern"],
+            enabled_features=enabled,
+            base_docstring=S_FETCH_PATTERN_DOCSTRING,
+            impl_func=_fake_impl,
+            config=config,
+        )
+        sig = inspect.signature(func)
+        assert sig.parameters["mode"].default == "stealth"
