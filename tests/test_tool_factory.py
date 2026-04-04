@@ -1,11 +1,12 @@
 """Tests for dynamic tool factory."""
 
 import inspect
+from pathlib import Path
 
 import pytest
 
 from scrapling_fetch_mcp._features import TOOL_PARAMS, S_FETCH_PAGE_DOCSTRING, S_FETCH_PATTERN_DOCSTRING
-from scrapling_fetch_mcp._tool_factory import build_tool_function, _build_docstring
+from scrapling_fetch_mcp._tool_factory import build_tool_function, _build_docstring, _resolve_default
 
 
 async def _fake_impl(**kwargs):
@@ -278,3 +279,38 @@ class TestTypeMapFallback:
         sig = inspect.signature(func)
         # list is not in _TYPE_MAP, so it should fall back to str
         assert sig.parameters["items"].annotation is str
+
+
+class TestResolveDefault:
+    """Tests for _resolve_default() helper."""
+
+    def test_no_config_key_returns_static_default(self):
+        """When config_key is absent, return the static default."""
+        cfg = {"type": str, "required": False, "default": "basic", "feature": None}
+        mock_config = type("Config", (), {"min_mode": "stealth"})()
+        assert _resolve_default(cfg, mock_config) == "basic"
+
+    def test_config_key_returns_config_value(self):
+        """When config_key points to a config attribute, return its value."""
+        cfg = {"type": str, "required": False, "default": "basic", "feature": None, "config_key": "min_mode"}
+        mock_config = type("Config", (), {"min_mode": "stealth"})()
+        assert _resolve_default(cfg, mock_config) == "stealth"
+
+    def test_config_key_path_converted_to_str(self):
+        """When config_key returns a Path, convert to string."""
+        cfg = {"type": str, "required": False, "default": ".temp/scrapling/", "feature": None, "config_key": "scraping_dir"}
+        mock_config = type("Config", (), {"scraping_dir": Path("/custom/path")})()
+        assert _resolve_default(cfg, mock_config) == "/custom/path"
+        assert isinstance(_resolve_default(cfg, mock_config), str)
+
+    def test_config_key_missing_attribute_returns_static_default(self):
+        """When config_key points to a non-existent attribute, fall back to static default."""
+        cfg = {"type": str, "required": False, "default": "basic", "feature": None, "config_key": "nonexistent"}
+        mock_config = type("Config", (), {})()
+        assert _resolve_default(cfg, mock_config) == "basic"
+
+    def test_config_value_none_returns_none(self):
+        """When config property returns None, use that None (not the static default)."""
+        cfg = {"type": str, "required": False, "default": "markdown", "feature": None, "config_key": "default_format"}
+        mock_config = type("Config", (), {"default_format": None})()
+        assert _resolve_default(cfg, mock_config) is None

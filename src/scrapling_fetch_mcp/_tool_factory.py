@@ -5,6 +5,7 @@ allowing MCP clients to control which parameters appear in tool schemas.
 """
 
 from logging import getLogger
+from pathlib import Path
 from typing import Any, Callable
 
 logger = getLogger("scrapling_fetch_mcp")
@@ -18,12 +19,27 @@ _TYPE_MAP = {
 }
 
 
+def _resolve_default(cfg: dict, config) -> Any:
+    """Resolve the effective default value for a parameter.
+
+    If the param config has a ``config_key`` and the config object has
+    that attribute, use the config value (converting Path to str).
+    Otherwise fall back to the static default in cfg["default"].
+    """
+    config_key = cfg.get("config_key")
+    if config_key and hasattr(config, config_key):
+        value = getattr(config, config_key)
+        return str(value) if isinstance(value, Path) else value
+    return cfg["default"]
+
+
 def build_tool_function(
     tool_name: str,
     param_configs: dict[str, dict],
     enabled_features: set[str],
     base_docstring: str,
     impl_func: Callable,
+    config=None,  # Config instance for dynamic default resolution
 ) -> Callable:
     """
     Dynamically build a tool function with only enabled parameters.
@@ -34,6 +50,7 @@ def build_tool_function(
         enabled_features: Set of enabled feature names
         base_docstring: Base description with IMPORTANT sections
         impl_func: The actual implementation function (accepts all params)
+        config: Config instance for resolving dynamic defaults
 
     Returns:
         Async function with the correct signature and docstring
@@ -54,7 +71,8 @@ def build_tool_function(
         cfg = param_configs[name]
         type_str = _TYPE_MAP.get(cfg["type"], "str")
         if not cfg["required"]:
-            sig_parts.append(f"{name}: {type_str} = {repr(cfg['default'])}")
+            effective_default = _resolve_default(cfg, config)
+            sig_parts.append(f"{name}: {type_str} = {repr(effective_default)}")
         else:
             sig_parts.append(f"{name}: {type_str}")
 
@@ -66,7 +84,7 @@ def build_tool_function(
         call_kwargs[name] = name
     for name, cfg in param_configs.items():
         if name not in call_kwargs:
-            call_kwargs[name] = repr(cfg["default"])
+            call_kwargs[name] = repr(_resolve_default(cfg, config))
     call_str = ", ".join(f"{k}={v}" for k, v in call_kwargs.items())
 
     # 4. Build dynamic docstring (only include enabled params in Args)
