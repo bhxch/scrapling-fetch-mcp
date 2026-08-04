@@ -266,52 +266,41 @@ class ContentSaver:
         mapping_file.write_text(dumps(mapping, indent=2), encoding="utf-8")
 
     def create_page_action(self):
-        """Create page_action closure for scrapling image interception
+        """Create a page_action closure that captures images via response events.
 
-        Returns a function that receives a route setup callable.
-        This is called BEFORE page navigation to set up context-level route interception.
+        scrapling >= 0.3 invokes ``page_action`` *after* navigation, so the old
+        context-level route interception (which monkey-patched a since-removed
+        ``_initialize_context``) can no longer catch in-flight image requests.
+        Instead we register a ``response`` listener and reload once, so every
+        image response is observed and saved. Only public Playwright APIs are
+        used (``page.on``, ``page.reload``, ``response.body``), so this does
+        not depend on scrapling internals.
+
+        Returns:
+            An async callable following scrapling's native contract
+            ``async def page_action(page)``.
         """
-        async def page_action(setup_routes):
-            """Setup route to intercept and save images at context level"""
-            self.logger.info("Setting up context-level route interceptor")
+        async def page_action(page):
+            self.logger.info("Setting up response-based image capture")
 
-            async def handle_route(route):
-                """Handle intercepted route requests"""
+            async def on_response(response):
                 try:
-                    url = route.request.url
-                    resource_type = route.request.resource_type
-                    self.logger.debug(f"Route intercepted: {url} (type: {resource_type})")
-
-                    # Only process images
-                    if resource_type == "image":
-                        # Fetch the resource
-                        response = await route.fetch()
-                        content_type = response.headers.get("content-type", "")
-                        self.logger.debug(f"Response content-type: {content_type}")
-
-                        body = await response.body()
-                        self.logger.info(f"Saving image: {url} ({len(body)} bytes)")
-
-                        # Save with deduplication
-                        await self.image_saver.save_image(url, body, content_type)
-
-                        # Fulfill the request
-                        await route.fulfill(response=response)
-                    else:
-                        # Continue with non-image requests
-                        await route.continue_()
-
+                    if response.request.resource_type != "image":
+                        return
+                    url = response.url
+                    body = await response.body()
+                    content_type = response.headers.get("content-type", "")
+                    self.logger.debug(f"Image response captured: {url} ({len(body)} bytes)")
+                    await self.image_saver.save_image(url, body, content_type)
                 except Exception as e:
-                    self.logger.warning(f"Failed to intercept image: {e}")
-                    # Continue with original request
-                    try:
-                        await route.continue_()
-                    except Exception:
-                        pass  # Ignore errors if context is already closed
+                    self.logger.warning(f"Failed to capture image: {e}")
 
-            # Register route for image types at context level
-            # This happens BEFORE any page.goto(), so we intercept all requests
-            await setup_routes("**/*.{png,jpg,jpeg,gif,svg,webp,ico,bmp}", handle_route)
-            self.logger.info("Context-level route interceptor registered")
+            page.on("response", on_response)
+            # page_action runs after navigation; reload so the listener we just
+            # registered observes every image response from a clean load.
+            try:
+                await page.reload(wait_until="networkidle")
+            except Exception as e:
+                self.logger.warning(f"Reload during image capture failed: {e}")
 
         return page_action

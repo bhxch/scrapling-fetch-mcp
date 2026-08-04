@@ -232,17 +232,55 @@ class TestContentSaver:
 
     @pytest.mark.asyncio
     async def test_create_page_action(self, temp_dir):
-        """Test page_action creation for image interception"""
+        """page_action follows scrapling's native page_action(page) contract:
+        it registers a response listener, reloads once, and saves image bodies."""
         from scrapling_fetch_mcp._content_saver import ContentSaver
 
         saver = ContentSaver(temp_dir, "https://example.com", "html")
-
-        # Create page_action
         page_action = saver.create_page_action()
         assert callable(page_action)
 
-        # Note: Full integration test will be done with real browser
-        # This just verifies the method exists and returns a callable
+        listeners = {}
+        reloaded = []
+
+        class FakePage:
+            def on(self, event, handler):
+                listeners[event] = handler
+
+            async def reload(self, **kwargs):
+                reloaded.append(kwargs)
+
+        class FakeResponse:
+            def __init__(self, url, resource_type="image", content_type="image/png"):
+                self.url = url
+                self.request = type("Req", (), {"resource_type": resource_type})()
+                self.headers = {"content-type": content_type}
+
+            async def body(self):
+                return b"IMGDATA"
+
+        saved = []
+
+        async def fake_save_image(url, body, content_type):
+            saved.append((url, body, content_type))
+
+        saver.image_saver.save_image = fake_save_image
+
+        await page_action(FakePage())
+
+        # listener registered and reload triggered
+        assert "response" in listeners
+        assert reloaded  # reload called so the listener sees a clean load
+
+        # image response is captured and saved
+        await listeners["response"](FakeResponse("https://example.com/a.png"))
+        assert saved == [("https://example.com/a.png", b"IMGDATA", "image/png")]
+
+        # non-image responses are ignored
+        await listeners["response"](
+            FakeResponse("https://example.com/", resource_type="document")
+        )
+        assert len(saved) == 1  # unchanged
 
     @pytest.mark.asyncio
     async def test_save_content_markdown(self, temp_dir, sample_html):
