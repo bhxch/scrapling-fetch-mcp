@@ -213,3 +213,65 @@ def ensure_browserforge_data() -> None:
         logger.info("browserforge model data ready (%d files)", placed)
     else:
         logger.warning("browserforge data unavailable; stealth mode may fail")
+
+
+# ---------------------------------------------------------------------------
+# camoufox stealth browser binaries
+# ---------------------------------------------------------------------------
+# Camoufox (a modified Firefox used by stealth/max-stealth modes) is fetched
+# on demand via ``python -m camoufox fetch`` from the daijro/camoufox GitHub
+# releases. Without it, importing camoufox fails on a missing version.json.
+# We trigger the fetch only when the version marker is absent, so the large
+# (~100 MB+) download runs once and an already-installed server starts
+# without hitting the network.
+
+_CAMOUFOX_FETCH_TIMEOUT = 600  # Firefox build is large; allow ample time.
+
+
+def _camoufox_version_path() -> str | None:
+    """Return the path to camoufox's installed version.json, or None.
+
+    None means camoufox is not installed as a dependency (nothing to ensure).
+    """
+    try:
+        import camoufox.pkgman as _pkgman
+    except ImportError:
+        return None
+    return os.path.join(str(_pkgman.INSTALL_DIR), "version.json")
+
+
+def ensure_camoufox() -> None:
+    """Ensure camoufox stealth browser binaries are installed.
+
+    Runs ``python -m camoufox fetch`` when the version marker is missing.
+    camoufox's own fetch is idempotent, but we gate it locally so an
+    already-installed server starts without a network round-trip. Failures
+    only warn; basic mode is unaffected.
+    """
+    version_path = _camoufox_version_path()
+    if version_path is None:
+        return
+    if os.path.exists(version_path):
+        return
+    logger.info("camoufox browser not found, fetching (first run downloads ~100 MB+)...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "camoufox", "fetch"],
+            capture_output=True,
+            text=True,
+            timeout=_CAMOUFOX_FETCH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("camoufox fetch timed out after %d s", _CAMOUFOX_FETCH_TIMEOUT)
+        return
+    except Exception as exc:  # noqa: BLE001 - keep server starting
+        logger.warning("Failed to run camoufox fetch: %s", exc)
+        return
+    if result.returncode == 0:
+        logger.info("camoufox browser ready")
+    else:
+        logger.warning(
+            "camoufox fetch failed (exit %d): %s",
+            result.returncode,
+            (result.stderr or "").strip()[:300],
+        )

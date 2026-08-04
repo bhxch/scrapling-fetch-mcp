@@ -1,5 +1,6 @@
 """Tests for browser/browserforge data bootstrapping in _browser_check.py."""
 import io
+import subprocess
 import tarfile
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,9 @@ from scrapling_fetch_mcp._browser_check import (
     _bf_data_complete,
     _browserforge_root,
     _fetch_npm_data_files,
+    _camoufox_version_path,
     ensure_browserforge_data,
+    ensure_camoufox,
 )
 
 
@@ -183,3 +186,69 @@ class TestEnsureBrowserforgeData:
         assert any(
             "Could not fetch browserforge data" in r.message for r in caplog.records
         )
+
+
+class TestEnsureCamoufox:
+    def test_noop_when_camoufox_absent(self):
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_version_path",
+            return_value=None,
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run"
+        ) as mock_run:
+            ensure_camoufox()
+        mock_run.assert_not_called()
+
+    def test_noop_when_already_installed(self, tmp_path):
+        marker = tmp_path / "version.json"
+        marker.write_text("{}")
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_version_path",
+            return_value=str(marker),
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run"
+        ) as mock_run:
+            ensure_camoufox()
+        mock_run.assert_not_called()
+
+    def test_fetches_when_missing(self, tmp_path):
+        # version.json path that does not exist -> triggers fetch
+        marker = tmp_path / "version.json"
+        success = subprocess.CompletedProcess(args=[], returncode=0)
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_version_path",
+            return_value=str(marker),
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run",
+            return_value=success,
+        ) as mock_run:
+            ensure_camoufox()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0][-2:] == ["camoufox", "fetch"]
+
+    def test_warns_on_fetch_failure(self, tmp_path, caplog):
+        marker = tmp_path / "version.json"  # absent
+        failure = subprocess.CompletedProcess(
+            args=[], returncode=1, stderr="network error"
+        )
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_version_path",
+            return_value=str(marker),
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run",
+            return_value=failure,
+        ):
+            ensure_camoufox()
+        assert any("camoufox fetch failed" in r.message for r in caplog.records)
+
+    def test_warns_on_timeout(self, tmp_path, caplog):
+        marker = tmp_path / "version.json"  # absent
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_version_path",
+            return_value=str(marker),
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="camoufox", timeout=1),
+        ):
+            ensure_camoufox()
+        assert any("timed out" in r.message for r in caplog.records)

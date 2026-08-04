@@ -4,8 +4,9 @@ from logging import getLogger
 from mcp.server.mcpserver import MCPServer
 
 from scrapling_fetch_mcp._browser_check import (
-    ensure_browsers_installed,
     ensure_browserforge_data,
+    ensure_browsers_installed,
+    ensure_camoufox,
 )
 from scrapling_fetch_mcp._config import config, init_config_from_env
 from scrapling_fetch_mcp._features import (
@@ -170,6 +171,7 @@ def run_server():
     # Ensure browserforge model data exists for stealth modes (falls back to
     # the npm registry when the official GitHub download path is unreachable).
     ensure_browserforge_data()
+    ensure_camoufox()
     # Ensure browsers are installed (handles version mismatches after updates)
     ensure_browsers_installed()
 
