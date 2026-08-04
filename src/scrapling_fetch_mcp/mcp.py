@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from logging import getLogger
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from scrapling_fetch_mcp._browser_check import ensure_browsers_installed
 from scrapling_fetch_mcp._config import config, init_config_from_env
@@ -14,11 +14,11 @@ from scrapling_fetch_mcp._features import (
 from scrapling_fetch_mcp._tool_factory import build_tool_function
 from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
 
-mcp = FastMCP("scrapling-fetch-mcp")
+mcp = MCPServer("scrapling-fetch-mcp")
 
 
 def _register_tool(name, param_configs, base_docstring, impl_func):
-    """Build a dynamic tool function and register it with FastMCP."""
+    """Build a dynamic tool function and register it with MCPServer."""
     func = build_tool_function(
         tool_name=name,
         param_configs=param_configs,

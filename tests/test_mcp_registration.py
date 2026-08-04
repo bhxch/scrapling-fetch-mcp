@@ -69,7 +69,7 @@ class TestRegisterTool:
         # Verify that mcp.tool() was called (decorator applied)
         # The real mcp.tool() should have been invoked without error
         # We can verify by checking mcp's internal tool registry
-        # FastMCP uses the function's __name__ as the registered tool name
+        # MCPServer uses the function's __name__ as the registered tool name
         registered_tool_names = list(mcp._tool_manager._tools.keys())
         assert "fake_tool_func" in registered_tool_names
 
