@@ -30,6 +30,19 @@ uvx --from scrapling-fetch-mcp scrapling install
 
 **Important**: The browser installation downloads hundreds of MB of data and must complete before first use. If the MCP server times out on first use, the browsers may still be installing in the background. Wait a few minutes and try again.
 
+### Stealth Mode Requirements
+
+`stealth` and `max-stealth` modes drive a modified Firefox ([camoufox](https://github.com/daijro/camoufox)) with browserforge fingerprint data. Both are **fetched automatically on first server startup** (the server verifies them before listening), but you can pre-install to avoid a slow first run:
+
+```bash
+# camoufox Firefox (~660 MB) from the daijro/camoufox GitHub releases
+uvx --from scrapling-fetch-mcp camoufox fetch
+```
+
+browserforge fingerprint data (~0.6 MB) is also auto-fetched on startup — from GitHub by default, falling back to the npm registry (`registry.npmjs.org`, then `registry.npmmirror.com`) when GitHub is unreachable.
+
+camoufox runs **headless** and does not need a desktop or Xvfb on a normal Linux server. (`basic` mode needs none of the above at all — it uses curl-cffi with no browser.)
+
 ## Setup with Claude Desktop
 
 Add this configuration to your Claude Desktop MCP settings:
@@ -333,7 +346,7 @@ Saved content is organized as:
 ### Requirements
 
 - Use `mode="max-stealth"` or `mode="stealth"` (basic mode may not load images)
-- Images are intercepted during page load via patchright route handling
+- Images are captured by listening to browser response events during page load (requires the stealth setup; see [Stealth Mode Requirements](#stealth-mode-requirements))
 
 ### Scraping Directory Configuration
 
