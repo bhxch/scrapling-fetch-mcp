@@ -3,7 +3,10 @@ from logging import getLogger
 
 from mcp.server.mcpserver import MCPServer
 
-from scrapling_fetch_mcp._browser_check import ensure_browsers_installed
+from scrapling_fetch_mcp._browser_check import (
+    ensure_browsers_installed,
+    ensure_browserforge_data,
+)
 from scrapling_fetch_mcp._config import config, init_config_from_env
 from scrapling_fetch_mcp._features import (
     FEATURES,
@@ -164,6 +167,9 @@ def run_server():
     logger.info(f"Features enabled: {sorted(config.enabled_features)}")
     logger.info(f"Features disabled: {sorted(all_features - config.enabled_features)}")
 
+    # Ensure browserforge model data exists for stealth modes (falls back to
+    # the npm registry when the official GitHub download path is unreachable).
+    ensure_browserforge_data()
     # Ensure browsers are installed (handles version mismatches after updates)
     ensure_browsers_installed()
 
