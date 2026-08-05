@@ -309,7 +309,12 @@ class TestFetchPatternWrapper:
 import scrapling_fetch_mcp._fetcher as fetcher_mod
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
-from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
+from scrapling_fetch_mcp._fetcher import (
+    fetch_page_wrapper,
+    fetch_pattern_wrapper,
+    fetch_page_impl,
+    fetch_pattern_impl,
+)
 
 
 class TestWrapperConcurrencyError:
@@ -362,4 +367,77 @@ class TestFetchTimeout:
         monkeypatch.setattr(fetcher_mod, "browse_url", slow)
         with pytest.raises(TimeoutError):
             await fetch_pattern_wrapper("http://x", "pat", "basic", "markdown", 1000)
+
+
+class TestProgressReporting:
+    """Tests for MCP Context-based progress reporting in impl functions.
+
+    When a ctx (mcp Context) is passed, impl functions report progress at
+    key stages (before browse, after browse, on completion) so that the
+    MCP server can emit progress notifications acting as liveness heartbeats
+    for long-running fetches.
+    """
+
+    def setup_method(self):
+        config.set_disable_url_rewrite(True)
+        # Ensure cache miss so browse_url is exercised end-to-end
+        config.cache.clear_all()
+
+    @pytest.mark.asyncio
+    async def test_page_impl_reports_progress(self, monkeypatch):
+        """fetch_page_impl reports progress at >=2 stages when ctx is provided."""
+        async def fake_browse(*a, **k):
+            page = MagicMock()
+            page.html_content = "<html><body>x</body></html>"
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        ctx = AsyncMock()
+        await fetch_page_impl("http://x", "basic", "markdown", 1000, 0, ctx=ctx)
+        assert ctx.report_progress.called
+        # At least: before browse + after browse / completion
+        assert ctx.report_progress.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_page_impl_no_ctx_does_not_raise(self, monkeypatch):
+        """fetch_page_impl works normally when ctx is None (default)."""
+        async def fake_browse(*a, **k):
+            page = MagicMock()
+            page.html_content = "<html><body>x</body></html>"
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        # No ctx= passed; should not raise
+        result = await fetch_page_impl("http://x", "basic", "markdown", 1000, 0)
+        assert "METADATA:" in result
+
+    @pytest.mark.asyncio
+    async def test_pattern_impl_reports_progress(self, monkeypatch):
+        """fetch_pattern_impl reports progress when ctx is provided."""
+        async def fake_browse(*a, **k):
+            page = MagicMock()
+            page.html_content = "<html><body>hello world</body></html>"
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        ctx = AsyncMock()
+        await fetch_pattern_impl(
+            "http://x", "hello", "basic", "markdown", 1000, 200, ctx=ctx
+        )
+        assert ctx.report_progress.called
+
+    @pytest.mark.asyncio
+    async def test_wrapper_forwards_ctx_to_impl(self, monkeypatch):
+        """fetch_page_wrapper forwards ctx to fetch_page_impl."""
+        async def fake_browse(*a, **k):
+            page = MagicMock()
+            page.html_content = "<html><body>x</body></html>"
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        ctx = AsyncMock()
+        await fetch_page_wrapper(
+            "http://x", "basic", "markdown", 1000, 0, ctx=ctx
+        )
+        assert ctx.report_progress.called
 

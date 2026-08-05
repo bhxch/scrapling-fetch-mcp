@@ -14,6 +14,8 @@ from typing import Optional
 from bs4 import BeautifulSoup
 from markitdown import MarkItDown
 
+from mcp.server.mcpserver.context import Context
+
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
 from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
@@ -162,6 +164,26 @@ def _create_metadata(
     return dumps(metadata)
 
 
+async def _maybe_report_progress(
+    ctx: Optional[Context],
+    progress: float,
+    total: float = 100,
+    message: Optional[str] = None,
+) -> None:
+    """Report progress via the MCP Context when one is available.
+
+    The SDK auto-injects a Context into tool calls; we forward it down to
+    the impl so progress notifications can be emitted at key stages, acting
+    as liveness heartbeats during long fetches (especially valuable for
+    streamable-http SSE transport to avoid idle disconnects).
+
+    Guarded so callers without a Context (direct library use, unit tests)
+    are unaffected.
+    """
+    if ctx is not None:
+        await ctx.report_progress(progress, total, message)
+
+
 async def fetch_page_impl(
     url: str,
     mode: str,
@@ -170,6 +192,7 @@ async def fetch_page_impl(
     start_index: int,
     save_content: bool = False,
     scraping_dir: Optional[Path] = None,
+    ctx: Optional[Context] = None,
 ) -> str:
     # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
     if not config.disable_url_rewrite:
@@ -192,6 +215,9 @@ async def fetch_page_impl(
     if cached_page is not None:
         page = cached_page
     else:
+        # About to perform the slow network/browse step — emit a heartbeat
+        # so transports (e.g. streamable-http SSE) know we are alive.
+        await _maybe_report_progress(ctx, 0, 100, "抓取中")
         # Fetch and cache the page
         try:
             page = await asyncio.wait_for(
@@ -201,6 +227,9 @@ async def fetch_page_impl(
         except asyncio.TimeoutError:
             raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）")
         config.cache.set(url, effective_mode, page)
+
+    # Browse complete — moving to content conversion.
+    await _maybe_report_progress(ctx, 80, 100, "转换中")
 
     is_markdown = format == "markdown"
 
@@ -226,6 +255,7 @@ async def fetch_page_impl(
     metadata_json = _create_metadata(
         total_length, len(truncated_content), is_truncated, start_index
     )
+    await _maybe_report_progress(ctx, 100, 100, "完成")
     return f"METADATA: {metadata_json}\n\n{truncated_content}"
 
 
@@ -236,6 +266,7 @@ async def fetch_pattern_impl(
     format: str,
     max_length: int,
     context_chars: int,
+    ctx: Optional[Context] = None,
 ) -> str:
     # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
     if not config.disable_url_rewrite:
@@ -251,6 +282,8 @@ async def fetch_pattern_impl(
     if cached_page is not None:
         page = cached_page
     else:
+        # About to perform the slow network/browse step — emit a heartbeat.
+        await _maybe_report_progress(ctx, 0, 100, "抓取中")
         # Fetch and cache the page
         try:
             page = await asyncio.wait_for(
@@ -260,6 +293,9 @@ async def fetch_pattern_impl(
         except asyncio.TimeoutError:
             raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）")
         config.cache.set(url, effective_mode, page)
+
+    # Browse complete — moving to search/conversion.
+    await _maybe_report_progress(ctx, 80, 100, "转换中")
 
     is_markdown = format == "markdown"
     full_content = (
@@ -273,6 +309,7 @@ async def fetch_pattern_impl(
 
     if not matched_content:
         metadata_json = _create_metadata(original_length, 0, False, None, 0)
+        await _maybe_report_progress(ctx, 100, 100, "完成")
         return f"METADATA: {metadata_json}\n\n"
 
     truncated_content = matched_content[:max_length]
@@ -281,6 +318,7 @@ async def fetch_pattern_impl(
     metadata_json = _create_metadata(
         original_length, len(truncated_content), is_truncated, None, match_count
     )
+    await _maybe_report_progress(ctx, 100, 100, "完成")
     return f"METADATA: {metadata_json}\n\n{truncated_content}"
 
 
@@ -292,6 +330,7 @@ async def fetch_page_wrapper(
     start_index: int,
     save_content: bool = False,
     scraping_dir: str = ".temp/scrapling/",
+    ctx: Optional[Context] = None,
 ) -> str:
     """Wrapper: format resolution, Path conversion, error handling."""
     try:
@@ -299,7 +338,7 @@ async def fetch_page_wrapper(
         scraping_path = Path(scraping_dir)
         result = await fetch_page_impl(
             url, mode, effective_format, max_length, start_index,
-            save_content=save_content, scraping_dir=scraping_path,
+            save_content=save_content, scraping_dir=scraping_path, ctx=ctx,
         )
         return result
     except ConcurrencyLimitError as e:
@@ -320,6 +359,7 @@ async def fetch_pattern_wrapper(
     format: str,
     max_length: int,
     context_chars: int = 200,
+    ctx: Optional[Context] = None,
 ) -> str:
     """Wrapper: format resolution, airead fallback, error handling."""
     try:
@@ -327,7 +367,8 @@ async def fetch_pattern_wrapper(
         if effective_format == "airead":
             effective_format = "markdown"
         result = await fetch_pattern_impl(
-            url, search_pattern, mode, effective_format, max_length, context_chars
+            url, search_pattern, mode, effective_format, max_length, context_chars,
+            ctx=ctx,
         )
         return result
     except ConcurrencyLimitError as e:

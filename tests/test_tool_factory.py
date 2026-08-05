@@ -42,9 +42,11 @@ class TestBuildToolFunction:
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
-        # All 7 params should be present
+        # All 7 user params should be present, plus the auto-injected ctx
+        # (ctx is in the signature but excluded from the client-facing schema
+        # by the SDK's find_context_parameter detection).
         expected = {"url", "mode", "format", "max_length", "start_index",
-                     "save_content", "scraping_dir"}
+                     "save_content", "scraping_dir", "ctx"}
         assert param_names == expected
 
     def test_save_disabled_hides_save_params(self):
@@ -177,7 +179,7 @@ class TestBuildToolFunctionPattern:
         )
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
-        expected = {"url", "search_pattern", "mode", "format", "max_length", "context_chars"}
+        expected = {"url", "search_pattern", "mode", "format", "max_length", "context_chars", "ctx"}
         assert param_names == expected
 
     def test_pattern_stealth_disabled_hides_mode(self):
@@ -214,9 +216,10 @@ class TestBuildToolFunctionPattern:
         param_names = set(sig.parameters.keys())
         # Core params: url, search_pattern, max_length, context_chars (feature=None)
         # Feature params: mode (stealth), format (format)
+        # ctx is always present (auto-injected Context param, excluded from client schema).
         assert "mode" not in param_names
         assert "format" not in param_names
-        assert param_names == {"url", "search_pattern", "max_length", "context_chars"}
+        assert param_names == {"url", "search_pattern", "max_length", "context_chars", "ctx"}
 
     @pytest.mark.asyncio
     async def test_pattern_delegates_to_impl_with_defaults(self):
@@ -438,3 +441,63 @@ class TestDynamicDefaults:
         )
         sig = inspect.signature(func)
         assert sig.parameters["mode"].default == "stealth"
+
+
+class TestContextInjection:
+    """Tests for MCP Context parameter injection into generated tool functions."""
+
+    def test_built_tool_has_context_param(self):
+        """Generated tool function has a ctx: Context param findable by SDK.
+
+        The MCP SDK uses find_context_parameter() to locate the Context param
+        by type annotation, then auto-injects the Context and excludes it
+        from the client-facing tool schema.
+        """
+        from mcp.server.mcpserver.utilities.context_injection import find_context_parameter
+
+        param_configs = {
+            "url": {
+                "type": str,
+                "required": True,
+                "feature": None,
+                "default": "",
+                "description": "url",
+            }
+        }
+        fn = build_tool_function(
+            tool_name="t",
+            param_configs=param_configs,
+            enabled_features=set(),
+            base_docstring="doc",
+            impl_func=_fake_impl,
+        )
+        # SDK must be able to identify the context parameter by name
+        assert find_context_parameter(fn) == "ctx"
+        # And the parameter must be present in the signature with a default
+        sig = inspect.signature(fn)
+        assert "ctx" in sig.parameters
+        assert sig.parameters["ctx"].default is None
+
+    @pytest.mark.asyncio
+    async def test_built_tool_forwards_ctx_to_impl(self):
+        """ctx argument is forwarded to impl as a keyword argument."""
+        param_configs = {
+            "url": {
+                "type": str,
+                "required": True,
+                "feature": None,
+                "default": "",
+                "description": "url",
+            }
+        }
+        fn = build_tool_function(
+            tool_name="t",
+            param_configs=param_configs,
+            enabled_features=set(),
+            base_docstring="doc",
+            impl_func=_fake_impl,
+        )
+        sentinel = object()
+        await fn("https://example.com", ctx=sentinel)
+        assert len(_fake_impl.calls) == 1
+        assert _fake_impl.calls[0]["ctx"] is sentinel

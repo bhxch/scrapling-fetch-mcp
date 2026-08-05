@@ -8,6 +8,8 @@ from logging import getLogger
 from pathlib import Path
 from typing import Any, Callable
 
+from mcp.server.mcpserver.context import Context
+
 logger = getLogger("scrapling_fetch_mcp")
 
 # Python 类型到签名字符串的映射
@@ -85,6 +87,17 @@ def build_tool_function(
     for name, cfg in param_configs.items():
         if name not in call_kwargs:
             call_kwargs[name] = repr(_resolve_default(cfg, config))
+
+    # Append ctx: Context for MCP progress reporting.
+    # The SDK's find_context_parameter() detects it by type annotation,
+    # auto-injects the runtime Context, and EXCLUDES it from the tool schema
+    # exposed to MCP clients (so it does not pollute the user-facing params).
+    # Default None keeps the generated function callable without a ctx
+    # (e.g. in unit tests) and avoids non-default-after-default syntax errors.
+    sig_str = (sig_str + ", ") if sig_str else ""
+    sig_str += "ctx: Context = None"
+    call_kwargs["ctx"] = "ctx"
+
     call_str = ", ".join(f"{k}={v}" for k, v in call_kwargs.items())
 
     # 4. Build dynamic docstring (only include enabled params in Args)
@@ -95,10 +108,13 @@ def build_tool_function(
     """{docstring}"""
     return await _impl({call_str})'''
 
-    namespace: dict[str, Any] = {"_impl": impl_func}
+    namespace: dict[str, Any] = {"_impl": impl_func, "Context": Context}
     # Note: Using Python built-in exec() for dynamic function creation.
     # All inputs come from code constants (TOOL_PARAMS), not from user input.
     # This is safe from code injection.
+    # `Context` is injected into namespace so that typing.get_type_hints(fn)
+    # can resolve the `ctx: Context` annotation — this is what the SDK's
+    # find_context_parameter() relies on to auto-inject the Context.
     exec(source, namespace)
     return namespace[tool_name]
 
