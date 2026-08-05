@@ -1,7 +1,7 @@
 """Tests for configuration"""
 import pytest
 from pathlib import Path
-from scrapling_fetch_mcp._config import Config
+from scrapling_fetch_mcp._config import Config, config, init_config_from_env
 
 
 class TestConfig:
@@ -114,3 +114,60 @@ class TestDefaultFormat:
 
         # Should remain default
         assert config.default_format == "markdown"
+
+
+class TestTransportConfig:
+    def setup_method(self):
+        config._transport = "stdio"
+        config._host = "127.0.0.1"
+        config._port = 8000
+        config._mcp_path = "/mcp"
+        config._auth_token = ""
+        config._max_concurrent = 5
+        config._acquire_timeout = 30.0
+
+    def test_defaults(self):
+        assert config.transport == "stdio"
+        assert config.host == "127.0.0.1"
+        assert config.port == 8000
+        assert config.mcp_path == "/mcp"
+        assert config.auth_token == ""
+        assert config.max_concurrent == 5
+        assert config.acquire_timeout == 30.0
+
+    def test_set_transport_valid(self):
+        config.set_transport("streamable-http")
+        assert config.transport == "streamable-http"
+
+    def test_set_transport_invalid(self):
+        with pytest.raises(ValueError):
+            config.set_transport("ws")
+
+    def test_set_port_bounds(self):
+        config.set_port(8080)
+        assert config.port == 8080
+        with pytest.raises(ValueError):
+            config.set_port(0)
+        with pytest.raises(ValueError):
+            config.set_port(70000)
+
+    def test_set_max_concurrent_invalid(self):
+        with pytest.raises(ValueError):
+            config.set_max_concurrent(0)
+
+    def test_env_loads_transport_config(self, monkeypatch):
+        monkeypatch.setenv("SCRAPLING_TRANSPORT", "streamable-http")
+        monkeypatch.setenv("SCRAPLING_HOST", "0.0.0.0")
+        monkeypatch.setenv("SCRAPLING_PORT", "9000")
+        monkeypatch.setenv("SCRAPLING_MCP_PATH", "/api/mcp")
+        monkeypatch.setenv("SCRAPLING_AUTH_TOKEN", "TOK")
+        monkeypatch.setenv("SCRAPLING_MAX_CONCURRENT", "8")
+        monkeypatch.setenv("SCRAPLING_ACQUIRE_TIMEOUT", "12.5")
+        init_config_from_env()
+        assert config.transport == "streamable-http"
+        assert config.host == "0.0.0.0"
+        assert config.port == 9000
+        assert config.mcp_path == "/api/mcp"
+        assert config.auth_token == "TOK"
+        assert config.max_concurrent == 8
+        assert config.acquire_timeout == 12.5

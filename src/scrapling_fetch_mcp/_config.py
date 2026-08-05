@@ -78,6 +78,15 @@ class Config:
     _disable_features_raw: list[str] = []
     _enable_features_raw: list[str] = []
 
+    # --- Transport / server / concurrency ---
+    _transport: str = "stdio"
+    _host: str = "127.0.0.1"
+    _port: int = 8000
+    _mcp_path: str = "/mcp"
+    _auth_token: str = ""
+    _max_concurrent: int = 5
+    _acquire_timeout: float = 30.0
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -200,6 +209,65 @@ class Config:
         self._disable_url_rewrite = disable
 
     @property
+    def transport(self) -> str:
+        return self._transport
+
+    def set_transport(self, transport: str) -> None:
+        if transport not in ("stdio", "streamable-http"):
+            raise ValueError(
+                f"Invalid transport '{transport}'. Must be one of: ['stdio', 'streamable-http']"
+            )
+        self._transport = transport
+
+    @property
+    def host(self) -> str:
+        return self._host
+
+    def set_host(self, host: str) -> None:
+        self._host = host
+
+    @property
+    def port(self) -> int:
+        return self._port
+
+    def set_port(self, port: int) -> None:
+        if not (1 <= port <= 65535):
+            raise ValueError("port must be between 1 and 65535")
+        self._port = port
+
+    @property
+    def mcp_path(self) -> str:
+        return self._mcp_path
+
+    def set_mcp_path(self, path: str) -> None:
+        self._mcp_path = path
+
+    @property
+    def auth_token(self) -> str:
+        return self._auth_token
+
+    def set_auth_token(self, token: str) -> None:
+        self._auth_token = token
+
+    @property
+    def max_concurrent(self) -> int:
+        return self._max_concurrent
+
+    def set_max_concurrent(self, value: int) -> None:
+        if value < 1:
+            raise ValueError("max_concurrent must be >= 1")
+        self._max_concurrent = value
+
+    @property
+    def acquire_timeout(self) -> float:
+        return self._acquire_timeout
+
+    def set_acquire_timeout(self, value: float) -> None:
+        if value < 0:
+            raise ValueError("acquire_timeout must be >= 0")
+        self._acquire_timeout = value
+
+    @property
     def enabled_features(self) -> set[str]:
         """Get the set of enabled feature names"""
         return self._enabled_features
@@ -303,3 +371,44 @@ def init_config_from_env() -> None:
     env_enable_features = getenv("SCRAPLING_ENABLE_FEATURES", "")
     config._disable_features_raw = [f.strip() for f in env_disable_features.split(",") if f.strip()]
     config._enable_features_raw = [f.strip() for f in env_enable_features.split(",") if f.strip()]
+
+    # --- Transport / server / concurrency config ---
+    env_transport = getenv("SCRAPLING_TRANSPORT", "").lower()
+    if env_transport:
+        try:
+            config.set_transport(env_transport)
+        except ValueError:
+            pass  # Invalid value, use default
+
+    env_host = getenv("SCRAPLING_HOST", "")
+    if env_host:
+        config.set_host(env_host)
+
+    env_port = getenv("SCRAPLING_PORT", "")
+    if env_port:
+        try:
+            config.set_port(int(env_port))
+        except ValueError:
+            pass
+
+    env_mcp_path = getenv("SCRAPLING_MCP_PATH", "")
+    if env_mcp_path:
+        config.set_mcp_path(env_mcp_path)
+
+    env_auth_token = getenv("SCRAPLING_AUTH_TOKEN", "")
+    if env_auth_token:
+        config.set_auth_token(env_auth_token)
+
+    env_max_concurrent = getenv("SCRAPLING_MAX_CONCURRENT", "")
+    if env_max_concurrent:
+        try:
+            config.set_max_concurrent(int(env_max_concurrent))
+        except ValueError:
+            pass
+
+    env_acquire_timeout = getenv("SCRAPLING_ACQUIRE_TIMEOUT", "")
+    if env_acquire_timeout:
+        try:
+            config.set_acquire_timeout(float(env_acquire_timeout))
+        except ValueError:
+            pass
