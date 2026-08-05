@@ -2,6 +2,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import scrapling_fetch_mcp._scrapling as scrapling_mod
+
 
 @pytest.mark.asyncio
 async def test_browse_url_with_page_action():
@@ -24,3 +26,42 @@ async def test_browse_url_with_page_action():
 
     # Check if page_action parameter exists
     assert "page_action" in params
+
+
+class TestBrowseUrlGuard:
+    def setup_method(self):
+        scrapling_mod._guard = None
+
+    def teardown_method(self):
+        scrapling_mod._guard = None
+
+    @pytest.mark.asyncio
+    async def test_guard_in_flight_during_call(self, monkeypatch):
+        scrapling_mod.init_guard(max_concurrent=2, acquire_timeout=1.0)
+        seen = []
+
+        async def fake_browse(url, mode, page_action=None):
+            seen.append(scrapling_mod._guard.in_flight)
+            return "page"
+
+        monkeypatch.setattr(scrapling_mod, "_do_browse", fake_browse)
+
+        result = await scrapling_mod.browse_url("http://x", "basic")
+        assert result == "page"
+        assert seen == [1]
+        assert scrapling_mod._guard.in_flight == 0
+        assert scrapling_mod._guard.total_acquired == 1
+
+    @pytest.mark.asyncio
+    async def test_no_guard_skips_limiting(self, monkeypatch):
+        called = []
+
+        async def fake_browse(url, mode, page_action=None):
+            called.append(url)
+            return "page"
+
+        monkeypatch.setattr(scrapling_mod, "_do_browse", fake_browse)
+        result = await scrapling_mod.browse_url("http://y", "basic")
+        assert result == "page"
+        assert scrapling_mod._guard is None
+        assert called == ["http://y"]
