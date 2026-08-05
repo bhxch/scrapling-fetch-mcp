@@ -793,7 +793,10 @@ class TestServerAuthConstruction:
         server = MCPServer(
             "scrapling-fetch-mcp-test",
             token_verifier=StaticTokenVerifier("secret"),
-            auth=AuthSettings(issuer_url="http://127.0.0.1:8000/"),
+            auth=AuthSettings(
+                issuer_url="http://127.0.0.1:8000/",
+                resource_server_url="http://127.0.0.1:8000/",
+            ),
         )
         assert server is not None
 ```
@@ -925,7 +928,10 @@ def run_server():
             "scrapling-fetch-mcp",
             token_verifier=StaticTokenVerifier(config.auth_token),
             auth=AuthSettings(
+                # mcp SDK 2.0.0 中 issuer_url 与 resource_server_url 均为必填；
+                # 静态 token 场景无独立 OAuth 服务器，二者同值（server 自身标识）。
                 issuer_url=f"http://{config.host}:{config.port}/",
+                resource_server_url=f"http://{config.host}:{config.port}/",
             ),
         )
 
