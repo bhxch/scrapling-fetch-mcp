@@ -441,3 +441,17 @@ class TestProgressReporting:
         )
         assert ctx.report_progress.called
 
+    @pytest.mark.asyncio
+    async def test_progress_failure_does_not_abort_fetch(self, monkeypatch):
+        """A failing report_progress (e.g. disconnected SSE) must not abort the fetch."""
+        async def fake_browse(*a, **k):
+            page = MagicMock()
+            page.html_content = "<html><body>x</body></html>"
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        ctx = AsyncMock()
+        ctx.report_progress.side_effect = RuntimeError("session gone")
+        result = await fetch_page_impl("http://x", "basic", "markdown", 1000, 0, ctx=ctx)
+        assert "METADATA" in result  # fetch completed despite progress failure
+

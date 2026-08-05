@@ -408,7 +408,7 @@ scrapling-fetch-mcp --transport streamable-http --max-concurrent 3 --acquire-tim
 
 **服务端（本工具）：**
 - `--acquire-timeout`（默认 30s）：并发满时的排队等待超时。长任务场景建议调大，如 `--acquire-timeout 300`。
-- `--fetch-timeout`（默认 60s）：单次抓取本身的超时（含浏览器加载），超时返回错误而非无限挂起，避免占满并发槽。
+- `--fetch-timeout`（默认 60s）：单次抓取本身的超时（含浏览器加载），超时返回错误而非无限挂起，避免占满并发槽。注意：超时取消是强制中断第三方抓取/浏览器协程，**浏览器进程可能短暂残留**（取决于 scrapling/camoufox 的清理行为）。
 
 **反向代理（最常见的超时来源）：**
 - nginx 默认 `proxy_read_timeout 60s`，会把长抓取请求误判超时。建议调大并关闭 SSE 缓冲：

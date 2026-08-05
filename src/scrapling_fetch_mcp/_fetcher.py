@@ -181,7 +181,12 @@ async def _maybe_report_progress(
     are unaffected.
     """
     if ctx is not None:
-        await ctx.report_progress(progress, total, message)
+        try:
+            await ctx.report_progress(progress, total, message)
+        except Exception:
+            # Progress is best-effort: a failing SSE session (e.g. client
+            # disconnect) must not abort the in-flight fetch.
+            logger.debug("progress report failed", exc_info=True)
 
 
 async def fetch_page_impl(
@@ -225,7 +230,7 @@ async def fetch_page_impl(
                 timeout=config.fetch_timeout,
             )
         except asyncio.TimeoutError:
-            raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）")
+            raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）") from None
         config.cache.set(url, effective_mode, page)
 
     # Browse complete — moving to content conversion.
@@ -291,7 +296,7 @@ async def fetch_pattern_impl(
                 timeout=config.fetch_timeout,
             )
         except asyncio.TimeoutError:
-            raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）")
+            raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）") from None
         config.cache.set(url, effective_mode, page)
 
     # Browse complete — moving to search/conversion.
