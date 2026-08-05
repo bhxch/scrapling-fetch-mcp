@@ -369,3 +369,57 @@ Or via environment variable:
 ```
 
 See [URL Rewrite Configuration](docs/url-rewrite-configuration.md) for details on writing custom rules.
+
+## Streamable-HTTP（远程访问）
+
+默认仍为 stdio（本地子进程）。要启用远程 HTTP 传输，设置 `--transport streamable-http`。
+
+### 本地（无鉴权）
+
+```bash
+scrapling-fetch-mcp --transport streamable-http --port 8000
+```
+
+客户端连接：`http://127.0.0.1:8000/mcp`
+
+### 内网 + Bearer 鉴权
+
+```bash
+scrapling-fetch-mcp \
+  --transport streamable-http \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --auth-token YOUR_SECRET
+```
+
+客户端需在请求头携带：`Authorization: Bearer YOUR_SECRET`。
+
+### 并发控制
+
+抓取是资源密集操作（stealth/max-stealth 会启动浏览器进程）。默认最多 5 个并发，超出排队等待最多 30 秒，超时则返回错误而非崩溃：
+
+```bash
+scrapling-fetch-mcp --transport streamable-http --max-concurrent 3 --acquire-timeout 60
+```
+
+### 公网 HTTPS（由反向代理终结 TLS）
+
+进程内不做 TLS，建议前置 Caddy/Nginx 终结 TLS。Caddy 示例：
+
+```caddyfile
+mcp.example.com {
+  reverse_proxy localhost:8000
+}
+```
+
+### 可用配置项
+
+| 配置 | env | CLI | 默认 |
+|---|---|---|---|
+| 传输 | `SCRAPLING_TRANSPORT` | `--transport` | `stdio` |
+| 绑定地址 | `SCRAPLING_HOST` | `--host` | `127.0.0.1` |
+| 端口 | `SCRAPLING_PORT` | `--port` | `8000` |
+| 路径 | `SCRAPLING_MCP_PATH` | `--mcp-path` | `/mcp` |
+| 鉴权 token | `SCRAPLING_AUTH_TOKEN` | `--auth-token` | （空） |
+| 最大并发 | `SCRAPLING_MAX_CONCURRENT` | `--max-concurrent` | `5` |
+| 等待超时(秒) | `SCRAPLING_ACQUIRE_TIMEOUT` | `--acquire-timeout` | `30` |

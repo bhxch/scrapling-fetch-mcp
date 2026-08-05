@@ -119,6 +119,27 @@ These settings are configured when starting the MCP server, either via CLI argum
 | `--url-rewrite-config` | `SCRAPLING_URL_REWRITE_CONFIG` | `str` | — | Path to custom URL rewrite rules YAML file |
 | `--disable-features` | `SCRAPLING_DISABLE_FEATURES` | `str` | `""` | Comma-separated features to disable |
 | `--enable-features` | `SCRAPLING_ENABLE_FEATURES` | `str` | `""` | Comma-separated features to enable |
+| `--transport` | `SCRAPLING_TRANSPORT` | `str` | `"stdio"` | Transport: `stdio` (default, local) or `streamable-http` (remote access) |
+| `--host` | `SCRAPLING_HOST` | `str` | `"127.0.0.1"` | Bind host for streamable-http |
+| `--port` | `SCRAPLING_PORT` | `int` | `8000` | Bind port for streamable-http |
+| `--mcp-path` | `SCRAPLING_MCP_PATH` | `str` | `"/mcp"` | URL path for streamable-http |
+| `--auth-token` | `SCRAPLING_AUTH_TOKEN` | `str` | `""` | Bearer token for streamable-http auth. Empty = no auth |
+| `--max-concurrent` | `SCRAPLING_MAX_CONCURRENT` | `int` | `5` | Max concurrent fetches (semaphore) |
+| `--acquire-timeout` | `SCRAPLING_ACQUIRE_TIMEOUT` | `float` | `30` | Seconds to wait for a concurrency slot before failing |
+
+### Streamable-HTTP (Remote Access)
+
+By default the server runs over stdio (local subprocess). To allow remote MCP clients to connect over HTTP, use `--transport streamable-http`:
+
+```bash
+# Local (no auth)
+scrapling-fetch-mcp --transport streamable-http --port 8000
+
+# LAN with bearer auth
+scrapling-fetch-mcp --transport streamable-http --host 0.0.0.0 --port 8000 --auth-token SECRET
+```
+
+Clients connect to `http://<host>:<port>/mcp` and must send `Authorization: Bearer SECRET` when an auth token is configured. Concurrency is bounded by `--max-concurrent` (default 5); requests beyond the limit queue for up to `--acquire-timeout` seconds, then return an error instead of crashing. For public HTTPS, terminate TLS at a reverse proxy (Caddy/Nginx). See [`MCP_CONFIG_EXAMPLES.md`](MCP_CONFIG_EXAMPLES.md) for full deployment examples.
 
 ## Feature Control
 
