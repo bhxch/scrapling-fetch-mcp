@@ -1,4 +1,5 @@
 """Tests for _register_tool and feature merge logic in mcp.py"""
+import sys
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -150,3 +151,74 @@ class TestServerAuthConstruction:
             ),
         )
         assert server is not None
+
+
+class TestRunServerTransport:
+    """Cover run_server() transport/auth branch logic (I-1)."""
+
+    _ENV_KEYS = [
+        "SCRAPLING_TRANSPORT", "SCRAPLING_HOST", "SCRAPLING_PORT",
+        "SCRAPLING_MCP_PATH", "SCRAPLING_AUTH_TOKEN",
+        "SCRAPLING_MAX_CONCURRENT", "SCRAPLING_ACQUIRE_TIMEOUT",
+    ]
+
+    def setup_method(self):
+        import scrapling_fetch_mcp.mcp as mcp_module
+        self._orig_mcp = mcp_module.mcp
+        config._transport = "stdio"
+        config._host = "127.0.0.1"
+        config._port = 8000
+        config._mcp_path = "/mcp"
+        config._auth_token = ""
+        config._max_concurrent = 5
+        config._acquire_timeout = 30.0
+
+    def teardown_method(self):
+        import scrapling_fetch_mcp.mcp as mcp_module
+        mcp_module.mcp = self._orig_mcp
+
+    def _stub(self, monkeypatch):
+        import scrapling_fetch_mcp.mcp as mcp_module
+        for k in self._ENV_KEYS:
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setattr(mcp_module, "ensure_browserforge_data", lambda: None)
+        monkeypatch.setattr(mcp_module, "ensure_camoufox", lambda: None)
+        monkeypatch.setattr(mcp_module, "ensure_browsers_installed", lambda: None)
+        captured = []
+        monkeypatch.setattr(
+            mcp_module.MCPServer, "run", lambda self, **kw: captured.append(kw)
+        )
+        return captured
+
+    def test_streamable_http_with_auth_rebuilds(self, monkeypatch):
+        import scrapling_fetch_mcp.mcp as mcp_module
+        captured = self._stub(monkeypatch)
+        monkeypatch.setattr(sys, "argv", [
+            "scrapling-fetch-mcp", "--transport", "streamable-http",
+            "--host", "0.0.0.0", "--port", "9000", "--auth-token", "SECRET",
+        ])
+        mcp_module.run_server()
+        assert any(c.get("transport") == "streamable-http" for c in captured)
+        # auth_token triggers rebuild into an authed instance
+        assert mcp_module.mcp.settings.auth is not None
+
+    def test_stdio_does_not_rebuild(self, monkeypatch):
+        import scrapling_fetch_mcp.mcp as mcp_module
+        captured = self._stub(monkeypatch)
+        monkeypatch.setattr(sys, "argv", ["scrapling-fetch-mcp", "--transport", "stdio"])
+        mcp_module.run_server()
+        assert any(c.get("transport") == "stdio" for c in captured)
+        # stdio keeps the top-level default instance (no rebuild)
+        assert mcp_module.mcp is self._orig_mcp
+
+    def test_http_no_auth_non_localhost_warns(self, monkeypatch, caplog):
+        import logging
+        import scrapling_fetch_mcp.mcp as mcp_module
+        self._stub(monkeypatch)
+        monkeypatch.setattr(sys, "argv", [
+            "scrapling-fetch-mcp", "--transport", "streamable-http",
+            "--host", "0.0.0.0", "--port", "9000",
+        ])
+        with caplog.at_level(logging.WARNING, logger="scrapling_fetch_mcp"):
+            mcp_module.run_server()
+        assert any("未授权" in r.message for r in caplog.records)
