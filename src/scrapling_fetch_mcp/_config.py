@@ -17,7 +17,15 @@ MODE_LEVELS = {
 
 
 class PageCache:
-    """Simple in-memory cache with TTL for page content"""
+    """Simple in-memory cache with TTL for page content.
+
+    Concurrency note: ``get`` / ``set`` / ``clear_*`` are synchronous and
+    contain no ``await``, so under a single asyncio event loop they execute
+    atomically — no data corruption. A cache stampede (duplicate fetch) is
+    possible when two callers miss the same key across an ``await
+    browse_url``; this is acceptable for this workload. Do not call these
+    methods from multiple OS threads.
+    """
 
     def __init__(self, ttl_seconds: int = 300):
         self._cache: dict[str, tuple[str, float, Any]] = {}  # key -> (mode, timestamp, content)
