@@ -169,6 +169,13 @@ def run_server():
         help="Seconds to wait for a concurrency slot before failing. Default: 30. "
         "Can also be set via SCRAPLING_ACQUIRE_TIMEOUT environment variable.",
     )
+    parser.add_argument(
+        "--fetch-timeout",
+        type=float,
+        default=None,
+        help="Seconds before a single fetch is aborted. Default: 60. "
+        "Can also be set via SCRAPLING_FETCH_TIMEOUT environment variable.",
+    )
     args = parser.parse_args()
 
 
@@ -214,6 +221,8 @@ def run_server():
         config.set_max_concurrent(args.max_concurrent)
     if args.acquire_timeout is not None:
         config.set_acquire_timeout(args.acquire_timeout)
+    if args.fetch_timeout is not None:
+        config.set_fetch_timeout(args.fetch_timeout)
 
     # Resolve features (merge env raw values + CLI args, call once)
     disable_cli_list = [f.strip() for f in args.disable_features.split(",") if f.strip()]

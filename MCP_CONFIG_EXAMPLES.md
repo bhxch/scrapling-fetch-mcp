@@ -448,3 +448,4 @@ mcp.example.com {
 | 鉴权 token | `SCRAPLING_AUTH_TOKEN` | `--auth-token` | （空） |
 | 最大并发 | `SCRAPLING_MAX_CONCURRENT` | `--max-concurrent` | `5` |
 | 等待超时(秒) | `SCRAPLING_ACQUIRE_TIMEOUT` | `--acquire-timeout` | `30` |
+| 抓取超时(秒) | `SCRAPLING_FETCH_TIMEOUT` | `--fetch-timeout` | `60` |

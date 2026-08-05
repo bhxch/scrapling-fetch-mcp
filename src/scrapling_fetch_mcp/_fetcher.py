@@ -1,3 +1,5 @@
+import asyncio
+
 import logging
 import os
 import tempfile
@@ -191,7 +193,13 @@ async def fetch_page_impl(
         page = cached_page
     else:
         # Fetch and cache the page
-        page = await browse_url(url, effective_mode, page_action=page_action)
+        try:
+            page = await asyncio.wait_for(
+                browse_url(url, effective_mode, page_action=page_action),
+                timeout=config.fetch_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）")
         config.cache.set(url, effective_mode, page)
 
     is_markdown = format == "markdown"
@@ -244,7 +252,13 @@ async def fetch_pattern_impl(
         page = cached_page
     else:
         # Fetch and cache the page
-        page = await browse_url(url, effective_mode)
+        try:
+            page = await asyncio.wait_for(
+                browse_url(url, effective_mode),
+                timeout=config.fetch_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"抓取超时（{config.fetch_timeout}s）")
         config.cache.set(url, effective_mode, page)
 
     is_markdown = format == "markdown"

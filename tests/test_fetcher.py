@@ -1,4 +1,6 @@
 """Tests for fetcher functions"""
+import asyncio
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -331,3 +333,33 @@ class TestWrapperConcurrencyError:
         monkeypatch.setattr(fetcher_mod, "browse_url", boom)
         with pytest.raises(ConcurrencyLimitError):
             await fetch_pattern_wrapper("http://x", "pattern", "basic", "markdown", 1000)
+
+
+class TestFetchTimeout:
+    def setup_method(self):
+        config.set_disable_url_rewrite(True)
+        config.set_fetch_timeout(0.05)  # 50ms
+
+    def teardown_method(self):
+        config.set_fetch_timeout(60.0)
+
+    @pytest.mark.asyncio
+    async def test_page_impl_timeout(self, monkeypatch):
+        async def slow(*a, **k):
+            await asyncio.sleep(1)
+            return "page"
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", slow)
+        with pytest.raises(TimeoutError):
+            await fetch_page_wrapper("http://x", "basic", "markdown", 1000, 0)
+
+    @pytest.mark.asyncio
+    async def test_pattern_impl_timeout(self, monkeypatch):
+        async def slow(*a, **k):
+            await asyncio.sleep(1)
+            return "page"
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", slow)
+        with pytest.raises(TimeoutError):
+            await fetch_pattern_wrapper("http://x", "pat", "basic", "markdown", 1000)
+

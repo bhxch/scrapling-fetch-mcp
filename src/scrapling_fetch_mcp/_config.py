@@ -94,6 +94,7 @@ class Config:
     _auth_token: str = ""
     _max_concurrent: int = 5
     _acquire_timeout: float = 30.0
+    _fetch_timeout: float = 60.0
 
     def __new__(cls):
         if cls._instance is None:
@@ -276,6 +277,15 @@ class Config:
         self._acquire_timeout = value
 
     @property
+    def fetch_timeout(self) -> float:
+        return self._fetch_timeout
+
+    def set_fetch_timeout(self, value: float) -> None:
+        if value < 0:
+            raise ValueError("fetch_timeout must be >= 0")
+        self._fetch_timeout = value
+
+    @property
     def enabled_features(self) -> set[str]:
         """Get the set of enabled feature names"""
         return self._enabled_features
@@ -418,5 +428,12 @@ def init_config_from_env() -> None:
     if env_acquire_timeout:
         try:
             config.set_acquire_timeout(float(env_acquire_timeout))
+        except ValueError:
+            pass
+
+    env_fetch_timeout = getenv("SCRAPLING_FETCH_TIMEOUT", "")
+    if env_fetch_timeout:
+        try:
+            config.set_fetch_timeout(float(env_fetch_timeout))
         except ValueError:
             pass
