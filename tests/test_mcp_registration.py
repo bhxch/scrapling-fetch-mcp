@@ -131,3 +131,22 @@ class TestFeatureMergeLogic:
         assert "stealth" in config.enabled_features
         assert "format" in config.enabled_features
         assert "pagination" in config.enabled_features
+
+
+class TestServerAuthConstruction:
+    def test_mcp_server_accepts_token_verifier_and_auth(self):
+        """MCPServer must construct cleanly with a static token verifier."""
+        from mcp.server.mcpserver import MCPServer
+        from mcp.server.auth.settings import AuthSettings
+
+        from scrapling_fetch_mcp._auth import StaticTokenVerifier
+
+        server = MCPServer(
+            "scrapling-fetch-mcp-test",
+            token_verifier=StaticTokenVerifier("secret"),
+            auth=AuthSettings(
+                issuer_url="http://127.0.0.1:8000/",
+                resource_server_url="http://127.0.0.1:8000/",
+            ),
+        )
+        assert server is not None
