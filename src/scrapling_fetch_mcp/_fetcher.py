@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from markitdown import MarkItDown
 
 from scrapling_fetch_mcp._config import config
+from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
 from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
 from scrapling_fetch_mcp._scrapling import browse_url
 from scrapling_fetch_mcp._content_saver import ContentSaver
@@ -287,6 +288,10 @@ async def fetch_page_wrapper(
             save_content=save_content, scraping_dir=scraping_path,
         )
         return result
+    except ConcurrencyLimitError as e:
+        logger = logging.getLogger("scrapling_fetch_mcp")
+        logger.info("s_fetch_page 并发限流: %s", str(e))
+        raise
     except Exception as e:
         logger = logging.getLogger("scrapling_fetch_mcp")
         logger.error("DETAILED ERROR IN s_fetch_page: %s", str(e))
@@ -311,6 +316,10 @@ async def fetch_pattern_wrapper(
             url, search_pattern, mode, effective_format, max_length, context_chars
         )
         return result
+    except ConcurrencyLimitError as e:
+        logger = logging.getLogger("scrapling_fetch_mcp")
+        logger.info("s_fetch_pattern 并发限流: %s", str(e))
+        raise
     except Exception as e:
         logger = logging.getLogger("scrapling_fetch_mcp")
         logger.error("DETAILED ERROR IN s_fetch_pattern: %s", str(e))

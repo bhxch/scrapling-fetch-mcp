@@ -302,3 +302,32 @@ class TestFetchPatternWrapper:
                 max_length=8000,
                 context_chars=200,
             )
+
+
+import scrapling_fetch_mcp._fetcher as fetcher_mod
+from scrapling_fetch_mcp._config import config
+from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
+from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
+
+
+class TestWrapperConcurrencyError:
+    def setup_method(self):
+        config.set_disable_url_rewrite(True)
+
+    @pytest.mark.asyncio
+    async def test_page_wrapper_propagates_concurrency_error(self, monkeypatch):
+        async def boom(*a, **k):
+            raise ConcurrencyLimitError("busy")
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", boom)
+        with pytest.raises(ConcurrencyLimitError):
+            await fetch_page_wrapper("http://x", "basic", "markdown", 1000, 0)
+
+    @pytest.mark.asyncio
+    async def test_pattern_wrapper_propagates_concurrency_error(self, monkeypatch):
+        async def boom(*a, **k):
+            raise ConcurrencyLimitError("busy")
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", boom)
+        with pytest.raises(ConcurrencyLimitError):
+            await fetch_pattern_wrapper("http://x", "pattern", "basic", "markdown", 1000)
