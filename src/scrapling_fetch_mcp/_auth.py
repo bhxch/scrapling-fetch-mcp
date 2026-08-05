@@ -6,6 +6,8 @@ When ``SCRAPLING_AUTH_TOKEN`` is configured, clients must send
 ``Authorization: Bearer <token>`` matching it.
 """
 
+import secrets
+
 from mcp.server.auth.provider import AccessToken
 
 
@@ -20,7 +22,8 @@ class StaticTokenVerifier:
         self._expected = expected_token
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if token and token == self._expected:
+        # Constant-time comparison to avoid timing side-channels on the secret.
+        if token and secrets.compare_digest(token, self._expected):
             return AccessToken(
                 token=token,
                 client_id="static-client",
