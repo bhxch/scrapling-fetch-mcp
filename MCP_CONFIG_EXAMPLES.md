@@ -402,6 +402,31 @@ scrapling-fetch-mcp \
 scrapling-fetch-mcp --transport streamable-http --max-concurrent 3 --acquire-timeout 60
 ```
 
+### 超时调优
+
+抓取一个页面（尤其 stealth/max-stealth 需启动浏览器）可能耗时 10–60 秒，并发排队还会叠加等待。streamable-http 下需注意各层超时：
+
+**服务端（本工具）：**
+- `--acquire-timeout`（默认 30s）：并发满时的排队等待超时。长任务场景建议调大，如 `--acquire-timeout 300`。
+- `--fetch-timeout`（默认 60s）：单次抓取本身的超时（含浏览器加载），超时返回错误而非无限挂起，避免占满并发槽。
+
+**反向代理（最常见的超时来源）：**
+- nginx 默认 `proxy_read_timeout 60s`，会把长抓取请求误判超时。建议调大并关闭 SSE 缓冲：
+  ```nginx
+  location /mcp {
+      proxy_pass http://127.0.0.1:8000;
+      proxy_read_timeout 300s;
+      proxy_send_timeout 300s;
+      proxy_buffering off;   # 让 SSE 流即时透传
+  }
+  ```
+- Caddy 默认无读超时，长连接友好，无需额外配置。
+
+**MCP 客户端：**
+- 客户端（如 Claude Code）的 HTTP 请求超时也需大于最长抓取耗时，按客户端文档调大。
+
+**进度心跳：** 工具执行中会上报 progress（既是进度，也在 streamable-http 下作为 SSE 心跳，降低空闲断连概率）。但浏览器加载阶段（第三方黑盒）内部无法插入心跳，仍需配合上述代理/客户端超时。
+
 ### 公网 HTTPS（由反向代理终结 TLS）
 
 进程内不做 TLS，建议前置 Caddy/Nginx 终结 TLS。Caddy 示例：
