@@ -228,30 +228,39 @@ def ensure_browserforge_data() -> None:
 _CAMOUFOX_FETCH_TIMEOUT = 600  # Firefox build is large; allow ample time.
 
 
-def _camoufox_version_path() -> str | None:
-    """Return the path to camoufox's installed version.json, or None.
+def _camoufox_installed() -> bool | None:
+    """Return True when a usable camoufox browser install exists.
 
     None means camoufox is not installed as a dependency (nothing to ensure).
+    camoufox >= 0.5 keeps browsers in versioned subdirectories under
+    ``browsers/<repo>/<version>`` (each with its own version.json) and never
+    writes version.json at the INSTALL_DIR root, so checking that legacy
+    path alone made every start re-run ``camoufox fetch``. Ask the multiversion
+    manager for the active install first, then fall back to the legacy layout.
     """
     try:
         import camoufox.pkgman as _pkgman
     except ImportError:
         return None
-    return os.path.join(str(_pkgman.INSTALL_DIR), "version.json")
+    try:
+        from camoufox.multiversion import get_active_path
+
+        if get_active_path() is not None:
+            return True
+    except ImportError:
+        pass
+    return os.path.exists(os.path.join(str(_pkgman.INSTALL_DIR), "version.json"))
 
 
 def ensure_camoufox() -> None:
     """Ensure camoufox stealth browser binaries are installed.
 
-    Runs ``python -m camoufox fetch`` when the version marker is missing.
+    Runs ``python -m camoufox fetch`` when no install is found.
     camoufox's own fetch is idempotent, but we gate it locally so an
     already-installed server starts without a network round-trip. Failures
     only warn; basic mode is unaffected.
     """
-    version_path = _camoufox_version_path()
-    if version_path is None:
-        return
-    if os.path.exists(version_path):
+    if _camoufox_installed() is not False:
         return
     logger.info("camoufox browser not found, fetching (first run downloads ~100 MB+)...")
     try:
@@ -267,7 +276,9 @@ def ensure_camoufox() -> None:
     except Exception as exc:  # noqa: BLE001 - keep server starting
         logger.warning("Failed to run camoufox fetch: %s", exc)
         return
-    if result.returncode == 0:
+    # camoufox >= 0.5 may exit 0 even when the download failed mid-way, so
+    # verify the install state instead of trusting the return code.
+    if _camoufox_installed():
         logger.info("camoufox browser ready")
     else:
         logger.warning(
