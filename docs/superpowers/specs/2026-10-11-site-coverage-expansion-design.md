@@ -100,18 +100,39 @@ trafilatura 的子集,无法补充现有组合的盲区;newspaper4k 还引入中
 
 "跳过"指不再为该站点投入适配工作(不写专用通道、不对抗风控),
 路由规则保留——developer_platform 的 trafilatura 仍是这些站点的
-最优兜底。逐站实测后在此回填结论:
+最优兜底。
 
-- juejin.cn:SPA 无 SSR,curl/basic 模式拿到空壳,跳过。
-- zhihu.com:未登录请求 403,不做登录态对抗,跳过。
-- stackexchange.com 域本身:对非浏览器 UA 返回 403,依赖重写到
-  StackPrinter 后抓取(重写规则已覆盖)。
-- CSDN/博客园:登录墙与动态化程度待实测,不达标即跳过。
-- Brave/Startpage/Searx:待实测,启发式不达标即跳过。
+逐站端到端实测结论(2026-10-11,12 站点各抓取一次,无重试)。
+"✅ 达标"指满足完整判读标准(SERP 条目数/关键词命中,文章正文
+字数与 METADATA 检查);"✅ 路由生效"仅指 B 层标准(列表页非空、
+无 error),内容深度未单独评估,两种强度不可混同。
+
+| 站点 | 结论 | 依据 |
+|---|---|---|
+| startpage(stealth) | ✅ 达标 | entries=10(≥5),asyncio 命中,样例 URL 为真实结果 |
+| v2ex | ✅ 达标 | chars=3104,Babel 命中,无 METADATA 异常 |
+| stackoverflow(经 StackPrinter 重写) | ✅ 达标 | chars=60000(总 68690,正常截断于 max_length),subprocess 命中,重写链路工作正常 |
+| hn_item | ✅ 可用(样本页本身短) | chars=720 未过 1000 字线,但 MSVCRT 命中、无 METADATA 异常,内容真实 |
+| infoq | ✅ 路由生效 | chars=1868 非空,无 error(B 层标准) |
+| cnblogs | ✅ 路由生效 | chars=2999 非空,无 error(B 层标准) |
+| juejin | ✅ 路由生效 | chars=2787 非空,无 error(B 层标准) |
+| brave | ⏭️ 跳过 | 本次实测返回挑战页式空 SERP(17 字符正文),结合本机 IP 风控背景推断;路由本身生效。风控冷却后可复测 |
+| searx | ⏭️ 跳过 | 本次实测返回挑战页式空 SERP(17 字符正文),结合本机 IP 风控背景推断;路由本身生效。风控冷却后可复测 |
+| reddit | ⏭️ 跳过 | 空壳/登录墙(未登录 403 类拦截),chars=340 壳页,关键词未命中 |
+| zhihu | ⏭️ 跳过 | 空壳/登录墙(未登录 403 类拦截),chars=35 壳页 |
+| csdn | ⚠️ 路由生效但内容薄 | 404 字符,登录墙/动态化存疑,按跳过原则不再投入 |
+
+其他已知限制:
+
+- stackexchange.com 域本身对非浏览器 UA 返回 403,依赖重写到
+  StackPrinter 后抓取(重写规则已覆盖,经上表 stackoverflow 行
+  实测确认)。
+- searx/reddit/superuser 路由使用子串式 regex,URL 中含这些域名
+  字符串的无关站点可能误伤(spec 3.1 的既有取舍)。
 
 ## 5. 实施状态
 
-- 工作区已就绪(待本 spec 评审通过后 commit):路由规则扩展、
-  重写规则扩展、对应单元测试(全量 217 通过)。
-- 待做:逐站端到端实测并回填附录结论;如个别站点需要微调路由
-  策略(如 CSDN → documentation),按实测结果调整。
+- 规则已提交(commit 1bce741):3.1 路由规则扩展、3.2 重写规则
+  扩展及对应单元测试(全量 217 通过)。
+- 端到端实测完成(2026-10-11,12 站点各抓取一次,无重试)。
+- 逐站结论已回填本文档第 4 节附录。
