@@ -98,6 +98,33 @@ def test_missing_skill_file_disables_extension(monkeypatch):
         ext.skill_entry()
 
 
+def test_missing_skill_file_on_disk_raises_and_disables(monkeypatch):
+    """真实 FileNotFoundError 分支:包内路径不存在时整体禁用(L-2)。
+
+    editable 安装下 joinpath 指向真实包目录,读不存在的文件抛原生
+    FileNotFoundError(而非仅靠 mock 返回 None 的合成路径)。
+    """
+    import scrapling_fetch_mcp._skills as skills_module
+
+    monkeypatch.setattr(skills_module, "_SKILL_PATH",
+                        "skills/scrapling-fetch/NO_SUCH_FILE.md")
+    assert load_skill_markdown() is None
+    assert SkillsExtension().available() is False
+    assert skills_module.build_extension() is None
+
+
+def test_empty_frontmatter_disables_extension(monkeypatch):
+    """空 frontmatter 块(缺 name/description)视为无效 SKILL.md(L-6)。"""
+    monkeypatch.setattr("scrapling_fetch_mcp._skills.load_skill_markdown",
+                        lambda: "---\n---\nbody")
+    ext = SkillsExtension()
+    assert ext.available() is False
+    assert ext.resources() == []
+    assert ext.methods() == []
+    from scrapling_fetch_mcp._skills import build_extension
+    assert build_extension() is None
+
+
 def test_malformed_frontmatter_disables_extension(monkeypatch):
     """畸形 SKILL.md 只禁用扩展,不导致 server 构造期崩溃。"""
     monkeypatch.setattr("scrapling_fetch_mcp._skills.load_skill_markdown",
@@ -119,18 +146,30 @@ def test_mcp_server_registers_extension_and_instruction():
                for e in registered)
 
 
-def test_auth_rebuild_reuses_instructions_and_extension():
-    """auth 重建分支与模块级构造共用同一 SERVER_INSTRUCTIONS 与扩展单例。"""
-    import inspect
+def test_build_mcp_factory_carries_instructions_and_extension():
+    """auth 重建分支经 _build_mcp 工厂动态构造:instructions 与扩展单例同源(L-3)。"""
+    from mcp.server.auth.settings import AuthSettings
 
+    from scrapling_fetch_mcp._auth import StaticTokenVerifier
     import scrapling_fetch_mcp.mcp as mcp_module
 
-    assert getattr(mcp_module, "_skill_extension", None) is not None
-    assert SKILL_URI in mcp_module.SERVER_INSTRUCTIONS
-    src = inspect.getsource(mcp_module)
-    rebuild = src[src.index("token_verifier=StaticTokenVerifier"):]
-    assert "instructions=SERVER_INSTRUCTIONS" in rebuild
-    assert "extensions=[_skill_extension]" in rebuild
+    server = mcp_module._build_mcp(
+        token_verifier=StaticTokenVerifier("secret"),
+        auth=AuthSettings(
+            issuer_url="http://127.0.0.1:9000/",
+            resource_server_url="http://127.0.0.1:9000/",
+        ),
+    )
+    # instructions 含 SKILL_URI,扩展被注册
+    assert SKILL_URI in server.instructions
+    exts = [e for e in getattr(server, "_extensions", [])
+            if e.identifier == "io.modelcontextprotocol/skills"]
+    assert len(exts) == 1
+    # 与模块级默认实例同构:同一 instructions 文本与同一扩展单例
+    assert server.instructions == mcp_module.mcp.instructions
+    module_ext = next(e for e in mcp_module.mcp._extensions
+                      if e.identifier == "io.modelcontextprotocol/skills")
+    assert exts[0] is module_ext
 
 
 def test_fetch_page_docstring_covers_contract():

@@ -57,12 +57,19 @@ class SkillsExtension(Extension):
 
     def __init__(self) -> None:
         self._markdown: Optional[str] = load_skill_markdown()
-        # 预解析 frontmatter:SKILL.md 畸形时禁用扩展(走 available()=False
-        # 路径),而不是让 server 构造期崩溃;也不得降级为空 dict,否则会
-        # 发布缺 name/description 的 entry,违反 SEP-2640。
+        # 预解析 frontmatter:SKILL.md 畸形或不完整时禁用扩展(走
+        # available()=False 路径),而不是让 server 构造期崩溃。SEP-2640 要求
+        # entry 携带 verbatim frontmatter:name/description 缺失或为空即视为
+        # 无效 SKILL.md,不得降级发布残缺 entry。
         try:
-            if not isinstance(self._frontmatter(), dict):
+            fm = self._frontmatter()
+            if not isinstance(fm, dict):
                 raise ValueError("frontmatter is not a mapping")
+            for key in ("name", "description"):
+                value = fm.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"frontmatter '{key}' must be a non-empty string")
         except (yaml.YAMLError, ValueError, AttributeError) as exc:
             if self._markdown is not None:
                 logger.warning(

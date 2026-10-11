@@ -30,11 +30,23 @@ SERVER_INSTRUCTIONS = (
     "extension for detailed fetching workflows."
 )
 
-mcp = MCPServer(
-    "scrapling-fetch-mcp",
-    instructions=SERVER_INSTRUCTIONS,
-    extensions=[_skill_extension] if _skill_extension else [],
-)
+
+def _build_mcp(**kwargs) -> MCPServer:
+    """Single MCPServer construction point.
+
+    Keeps instructions and the skills extension identical between the
+    module-level default instance and the auth rebuild branch in
+    run_server(); extra kwargs (token_verifier/auth) are passed through.
+    """
+    return MCPServer(
+        "scrapling-fetch-mcp",
+        instructions=SERVER_INSTRUCTIONS,
+        extensions=[_skill_extension] if _skill_extension else [],
+        **kwargs,
+    )
+
+
+mcp = _build_mcp()
 
 
 def _register_tool(name, param_configs, base_docstring, impl_func):
@@ -278,15 +290,12 @@ def run_server():
     # When auth is enabled, (re)build the MCPServer with a token verifier.
     # MUST happen before registering tools so they bind to the authed instance.
     if config.transport == "streamable-http" and config.auth_token:
-        mcp = MCPServer(
-            "scrapling-fetch-mcp",
+        mcp = _build_mcp(
             token_verifier=StaticTokenVerifier(config.auth_token),
             auth=AuthSettings(
                 issuer_url=f"http://{config.host}:{config.port}/",
                 resource_server_url=f"http://{config.host}:{config.port}/",
             ),
-            instructions=SERVER_INSTRUCTIONS,
-            extensions=[_skill_extension] if _skill_extension else [],
         )
 
     # Build and register tools dynamically (registers onto the current global mcp)
