@@ -95,14 +95,23 @@ reading, format/mode selection, and known limitations`。
 
 ### 3.3 Tool 描述优化(`_features.py`)
 
+**职责分工原则(评审确定)**:tool 描述只承载**单次调用的契约**
+——何时调用、参数怎么填、输出怎么解析——保持短(每次 tools/list
+都进上下文);多步工作流与组合模式(搜索两步、翻页操作、URL 重写
+说明、风控重试)全部归 3.1 的 skill(渐进披露,按需加载)。
+
+保留在 tool 描述的最小修改:
+
 | 位置 | 问题 | 改法 |
 |---|---|---|
-| S_FETCH_PAGE_DOCSTRING | 未提搜索工作流与 SERP 输出形态 | 增补:搜索引擎 URL + airead 返回 `### N.` 结构化条目与真实链接;这是做"搜索→抓原文"的正确入口 |
-| S_FETCH_PAGE_DOCSTRING | URL 重写自动化不可见 | 增补一句:常见重站点(DDG/Bing/Reddit/StackOverflow/StackExchange)自动改写为轻量形态,直接传原始 URL 即可 |
-| S_FETCH_PAGE_DOCSTRING | 分页工作流不显式 | 增补:`is_truncated=true` 时以 `start_index += max_length` 续读 |
-| mode 参数(两处重复) | 冗长且无决策指引 | 精简为 "basic(快,默认)/ stealth(轻反爬)/ max-stealth(强反爬);403/202 时升级" |
-| S_FETCH_PATTERN_DOCSTRING | 未说明 pattern 匹配的文本域 | 增补:pattern 作用于 format 决定的转换后文本(markdown 或 html) |
-| 两个 DOCSTRING | 未指向 skill | 尾部加一行:详见 `skill://scrapling-fetch/SKILL.md`(支持 skills 扩展的 host 可加载;其他 host 忽略无害) |
+| S_FETCH_PAGE_DOCSTRING | airead 对搜索页的输出形态未说明 | 加一行:搜索引擎页 + airead 返回 `### N.` 结构化条目与已解析的真实链接(输出解析契约) |
+| mode 参数(两处重复) | 冗长且无决策指引 | 精简为 "basic(快,默认)/ stealth(轻反爬)/ max-stealth(强反爬);遇 403/202 升级"(参数填法) |
+| S_FETCH_PATTERN_DOCSTRING | 未说明 pattern 匹配的文本域 | 增补:pattern 作用于 format 决定的转换后文本(markdown 或 html)(参数语义) |
+| 两个 DOCSTRING | 未指向 skill | 尾部各加一行:工作流详见 `skill://scrapling-fetch/SKILL.md`(不支持 skills 的 host 忽略无害) |
+
+撤销原方案中的两条:分页工作流(`start_index` 参数描述已含
+"useful if a previous fetch was truncated",再写是重复)与 URL 重写
+说明(工作流知识,归 skill)。
 
 ### 3.4 测试与验证
 
