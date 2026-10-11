@@ -134,49 +134,68 @@ def ensure_browserforge_data() -> None:
 # ---------------------------------------------------------------------------
 # Camoufox (a modified Firefox used by stealth/max-stealth modes) is fetched
 # on demand via ``python -m camoufox fetch`` from the daijro/camoufox GitHub
-# releases. Without it, importing camoufox fails on a missing version.json.
-# We trigger the fetch only when the version marker is absent, so the large
-# (~100 MB+) download runs once and an already-installed server starts
-# without hitting the network.
+# releases. Without it, scrapling's stealth engines fail on the missing
+# version.json. We trigger the fetch when no usable install is found: either
+# the marker is absent, or its version falls outside the range the installed
+# camoufox package supports (e.g. after a package upgrade). camoufox >= 0.5
+# keeps browsers in versioned subdirectories under ``browsers/<repo>/<version>``
+# and never writes version.json at the INSTALL_DIR root, so the multiversion
+# manager is asked for the active install before falling back to the legacy
+# layout. The ~1.2 GB download then runs only when needed and an up-to-date
+# server starts without hitting the network.
 
 _CAMOUFOX_FETCH_TIMEOUT = 600  # Firefox build is large; allow ample time.
 
 
-def _camoufox_installed() -> bool | None:
-    """Return True when a usable camoufox browser install exists.
-
-    None means camoufox is not installed as a dependency (nothing to ensure).
-    camoufox >= 0.5 keeps browsers in versioned subdirectories under
-    ``browsers/<repo>/<version>`` (each with its own version.json) and never
-    writes version.json at the INSTALL_DIR root, so checking that legacy
-    path alone made every start re-run ``camoufox fetch``. Ask the multiversion
-    manager for the active install first, then fall back to the legacy layout.
-    """
+def _import_camoufox_pkgman():
+    """Return ``camoufox.pkgman``, or None when camoufox is not installed."""
     try:
         import camoufox.pkgman as _pkgman
     except ImportError:
         return None
+    return _pkgman
+
+
+def _camoufox_supported() -> bool | None:
+    """Whether the installed camoufox browser is usable, or None if unknown.
+
+    None means camoufox is not installed as a dependency (nothing to ensure).
+    False covers a missing install and legacy-layout markers outside the
+    range the installed camoufox package supports — both must refetch;
+    otherwise scrapling's stealth engines break at runtime instead.
+    """
+    pkgman = _import_camoufox_pkgman()
+    if pkgman is None:
+        return None
     try:
         from camoufox.multiversion import get_active_path
-
-        if get_active_path() is not None:
-            return True
     except ImportError:
-        pass
-    return os.path.exists(os.path.join(str(_pkgman.INSTALL_DIR), "version.json"))
+        # Legacy layout (camoufox < 0.5): version.json at the INSTALL_DIR root.
+        try:
+            return pkgman.Version.from_path(pkgman.INSTALL_DIR).is_supported()
+        except Exception:  # noqa: BLE001 - missing/corrupt marker => refetch
+            return False
+    # Multiversion layout (camoufox >= 0.5): the manager resolves the active
+    # versioned install itself; presence means usable.
+    try:
+        return get_active_path() is not None
+    except Exception:  # noqa: BLE001 - broken manager state => refetch
+        return False
 
 
 def ensure_camoufox() -> None:
-    """Ensure camoufox stealth browser binaries are installed.
+    """Ensure camoufox stealth browser binaries are installed and supported.
 
-    Runs ``python -m camoufox fetch`` when no install is found.
-    camoufox's own fetch is idempotent, but we gate it locally so an
-    already-installed server starts without a network round-trip. Failures
-    only warn; basic mode is unaffected.
+    Runs ``python -m camoufox fetch`` when no usable install is found: either
+    the browser is missing or its version no longer matches the camoufox
+    package's supported range. camoufox's own fetch is idempotent, but we gate
+    it locally so an already-installed server starts without a network
+    round-trip. Failures only warn; basic mode is unaffected.
     """
-    if _camoufox_installed() is not False:
+    supported = _camoufox_supported()
+    if supported is None or supported:
         return
-    logger.info("camoufox browser not found, fetching (first run downloads ~100 MB+)...")
+    logger.info("camoufox browser missing or outdated, fetching (~1.2 GB)...")
     try:
         result = subprocess.run(
             [sys.executable, "-m", "camoufox", "fetch"],
@@ -192,11 +211,11 @@ def ensure_camoufox() -> None:
         return
     # camoufox >= 0.5 may exit 0 even when the download failed mid-way, so
     # verify the install state instead of trusting the return code.
-    if _camoufox_installed():
+    if _camoufox_supported():
         logger.info("camoufox browser ready")
     else:
         logger.warning(
-            "camoufox fetch failed (exit %d): %s",
+            "camoufox fetch produced no usable install (exit %d): %s",
             result.returncode,
             (result.stderr or "").strip()[:300],
         )

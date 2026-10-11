@@ -1,10 +1,11 @@
 """Tests for browser/browserforge data bootstrapping in _browser_check.py."""
-import builtins
 import io
 import subprocess
+import sys
 import tarfile
 import types
 import urllib.error
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +14,7 @@ from scrapling_fetch_mcp._browser_check import (
     _BF_DATA_FILES,
     _bf_data_complete,
     _browserforge_root,
-    _camoufox_installed,
+    _camoufox_supported,
     _fetch_npm_data_files,
     ensure_browserforge_data,
     ensure_camoufox,
@@ -190,66 +191,82 @@ class TestEnsureBrowserforgeData:
         )
 
 
-class TestCamoufoxInstalled:
-    def test_true_when_multiversion_active(self, tmp_path):
-        import sys
+class TestCamoufoxSupported:
+    @staticmethod
+    def _fake_pkgman(from_path):
+        return types.SimpleNamespace(
+            INSTALL_DIR=Path("/fake/camoufox"),
+            Version=types.SimpleNamespace(from_path=from_path),
+        )
 
+    @staticmethod
+    def _pin_legacy_layout(monkeypatch):
+        # Force the legacy branch even if the venv's camoufox ships a
+        # multiversion module later (None makes the import raise ImportError).
+        monkeypatch.setitem(sys.modules, "camoufox.multiversion", None)
+
+    def test_true_when_version_supported(self, monkeypatch):
+        version = types.SimpleNamespace(is_supported=lambda: True)
+        from_path = MagicMock(return_value=version)
+        self._pin_legacy_layout(monkeypatch)
+        with patch(
+            "scrapling_fetch_mcp._browser_check._import_camoufox_pkgman",
+            return_value=self._fake_pkgman(from_path),
+        ):
+            assert _camoufox_supported() is True
+        from_path.assert_called_once_with(Path("/fake/camoufox"))
+
+    def test_false_when_marker_missing(self, monkeypatch):
+        from_path = MagicMock(side_effect=FileNotFoundError("no version.json"))
+        self._pin_legacy_layout(monkeypatch)
+        with patch(
+            "scrapling_fetch_mcp._browser_check._import_camoufox_pkgman",
+            return_value=self._fake_pkgman(from_path),
+        ):
+            assert _camoufox_supported() is False
+
+    def test_false_when_marker_corrupt(self, monkeypatch):
+        from_path = MagicMock(side_effect=ValueError("bad json"))
+        self._pin_legacy_layout(monkeypatch)
+        with patch(
+            "scrapling_fetch_mcp._browser_check._import_camoufox_pkgman",
+            return_value=self._fake_pkgman(from_path),
+        ):
+            assert _camoufox_supported() is False
+
+    def test_none_when_pkgman_not_installed(self, monkeypatch):
+        # None in sys.modules makes `import camoufox.pkgman` raise ImportError.
+        monkeypatch.setitem(sys.modules, "camoufox.pkgman", None)
+        assert _camoufox_supported() is None
+
+    def test_true_when_multiversion_active(self, monkeypatch, tmp_path):
         active = tmp_path / "browsers" / "official" / "152.0.4"
-        (active / ".").mkdir(parents=True)
+        active.mkdir(parents=True)
         (active / "version.json").write_text("{}")
         multiversion = types.ModuleType("camoufox.multiversion")
         multiversion.get_active_path = lambda: active
-        pkgman = types.ModuleType("camoufox.pkgman")
-        pkgman.INSTALL_DIR = tmp_path
-        camoufox = types.ModuleType("camoufox")
-        with patch.dict(
-            sys.modules,
-            {"camoufox": camoufox, "camoufox.pkgman": pkgman, "camoufox.multiversion": multiversion},
+        monkeypatch.setitem(sys.modules, "camoufox.multiversion", multiversion)
+        with patch(
+            "scrapling_fetch_mcp._browser_check._import_camoufox_pkgman",
+            return_value=types.SimpleNamespace(INSTALL_DIR=tmp_path),
         ):
-            assert _camoufox_installed() is True
+            assert _camoufox_supported() is True
 
-    def test_true_when_legacy_version_json_exists(self, tmp_path):
-        import sys
-
-        (tmp_path / "version.json").write_text("{}")
-        pkgman = types.ModuleType("camoufox.pkgman")
-        pkgman.INSTALL_DIR = tmp_path
-        camoufox = types.ModuleType("camoufox")
-
-        def _no_multiversion(name):
-            raise ImportError(name)
-
-        real_import = builtins.__import__
-
-        def fake_import(name, *a, **k):
-            if name == "camoufox.multiversion":
-                raise ImportError(name)
-            return real_import(name, *a, **k)
-
-        with patch.dict(
-            sys.modules, {"camoufox": camoufox, "camoufox.pkgman": pkgman}
-        ), patch("builtins.__import__", side_effect=fake_import):
-            assert _camoufox_installed() is True
-
-    def test_false_when_nothing_installed(self, tmp_path):
-        import sys
-
+    def test_false_when_multiversion_reports_no_active(self, monkeypatch, tmp_path):
         multiversion = types.ModuleType("camoufox.multiversion")
         multiversion.get_active_path = lambda: None
-        pkgman = types.ModuleType("camoufox.pkgman")
-        pkgman.INSTALL_DIR = tmp_path
-        camoufox = types.ModuleType("camoufox")
-        with patch.dict(
-            sys.modules,
-            {"camoufox": camoufox, "camoufox.pkgman": pkgman, "camoufox.multiversion": multiversion},
+        monkeypatch.setitem(sys.modules, "camoufox.multiversion", multiversion)
+        with patch(
+            "scrapling_fetch_mcp._browser_check._import_camoufox_pkgman",
+            return_value=types.SimpleNamespace(INSTALL_DIR=tmp_path),
         ):
-            assert _camoufox_installed() is False
+            assert _camoufox_supported() is False
 
 
 class TestEnsureCamoufox:
     def test_noop_when_camoufox_absent(self):
         with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_installed",
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
             return_value=None,
         ), patch(
             "scrapling_fetch_mcp._browser_check.subprocess.run"
@@ -257,9 +274,9 @@ class TestEnsureCamoufox:
             ensure_camoufox()
         mock_run.assert_not_called()
 
-    def test_noop_when_already_installed(self):
+    def test_noop_when_installed_version_supported(self):
         with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_installed",
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
             return_value=True,
         ), patch(
             "scrapling_fetch_mcp._browser_check.subprocess.run"
@@ -267,11 +284,11 @@ class TestEnsureCamoufox:
             ensure_camoufox()
         mock_run.assert_not_called()
 
-    def test_fetches_when_missing(self):
+    def test_fetches_when_missing_or_unsupported(self, caplog):
         success = subprocess.CompletedProcess(args=[], returncode=0)
         with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_installed",
-            side_effect=[False, True],
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
+            side_effect=[False, True],  # gate first, then post-fetch verification
         ), patch(
             "scrapling_fetch_mcp._browser_check.subprocess.run",
             return_value=success,
@@ -280,36 +297,37 @@ class TestEnsureCamoufox:
         mock_run.assert_called_once()
         assert mock_run.call_args.args[0][-2:] == ["camoufox", "fetch"]
 
-    def test_warns_when_fetch_exit_zero_but_not_installed(self, caplog):
+    def test_warns_when_fetch_exit_zero_but_no_usable_install(self, caplog):
         # camoufox >= 0.5 exits 0 even when the download failed mid-way.
         fake_success = subprocess.CompletedProcess(args=[], returncode=0)
         with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_installed",
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
             side_effect=[False, False],
         ), patch(
             "scrapling_fetch_mcp._browser_check.subprocess.run",
             return_value=fake_success,
         ):
             ensure_camoufox()
-        assert any("camoufox fetch failed" in r.message for r in caplog.records)
+        assert any("produced no usable install" in r.message for r in caplog.records)
 
-    def test_warns_on_fetch_failure(self, caplog):
+    def test_warns_when_fetch_fails(self, caplog):
         failure = subprocess.CompletedProcess(
             args=[], returncode=1, stderr="network error"
         )
         with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_installed",
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
             side_effect=[False, False],
         ), patch(
             "scrapling_fetch_mcp._browser_check.subprocess.run",
             return_value=failure,
         ):
             ensure_camoufox()
-        assert any("camoufox fetch failed" in r.message for r in caplog.records)
+        assert any("produced no usable install" in r.message for r in caplog.records)
+        assert any("network error" in r.message for r in caplog.records)
 
     def test_warns_on_timeout(self, caplog):
         with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_installed",
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
             return_value=False,
         ), patch(
             "scrapling_fetch_mcp._browser_check.subprocess.run",
