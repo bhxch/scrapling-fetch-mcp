@@ -15,7 +15,13 @@ classifiers = [
 dependencies = [
     "beautifulsoup4>=4.14.2",
     "browserforge>=1.2.3",
-    "camoufox>=0.4.11",
+    # Capped below 0.5 on purpose: camoufox 0.5.x drops the launch kwargs
+    # scrapling 0.3.x passes through (stealth fetch dies with
+    # "launch_persistent_context() got an unexpected keyword argument
+    # 'allow_webgl'") and moves to a new, incompatible ~/.cache/camoufox
+    # layout that breaks 0.4.x installs sharing the same cache. Revisit
+    # together with a scrapling upgrade that supports the 0.5 API.
+    "camoufox>=0.4.11,<0.5",
     "curl-cffi>=0.13.0",
     "lxml>=6.0.2",
     "markdownify>=1.2.0",
