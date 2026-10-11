@@ -37,4 +37,22 @@ BUILTIN_REWRITE_RULES = [
             "replacement": r"https://www.stackprinter.com/export?question=\1&service=stackoverflow&format=HTML&comments=true"
         }
     },
+    # StackExchange 子域 (如 unix.stackexchange.com): questions → StackPrinter
+    {
+        "match": {"type": "regex", "pattern": r"https://(?!www\.)([a-z0-9-]+)\.stackexchange\.com/questions/(\d+)/.*$"},
+        "rewrite": {
+            "type": "regex_replace",
+            "pattern": r"https://(?!www\.)([a-z0-9-]+)\.stackexchange\.com/questions/(\d+)/.*$",
+            "replacement": r"https://www.stackprinter.com/export?question=\2&service=\1&format=HTML&comments=true"
+        }
+    },
+    # superuser/serverfault/askubuntu: questions → StackPrinter
+    {
+        "match": {"type": "regex", "pattern": r"https://(www\.)?(superuser|serverfault|askubuntu)\.com/questions/(\d+)/.*$"},
+        "rewrite": {
+            "type": "regex_replace",
+            "pattern": r"https://(www\.)?(superuser|serverfault|askubuntu)\.com/questions/(\d+)/.*$",
+            "replacement": r"https://www.stackprinter.com/export?question=\3&service=\2&format=HTML&comments=true"
+        }
+    },
 ]

@@ -25,6 +25,23 @@ url_rules:
       pattern: ".duckduckgo.com"
     strategy: search_engine
 
+  - match:
+      type: domain_suffix
+      pattern: ".brave.com"
+    strategy: search_engine
+
+  - match:
+      type: regex
+      pattern: '.*startpage\\.com.*'
+    strategy: search_engine
+
+  # Searx/SearxNG 公共实例域名异构(如 searx.be、searxng.site),
+  # 用子串式 regex 覆盖;规则靠后,降低误伤概率
+  - match:
+      type: regex
+      pattern: ".*searx.*"
+    strategy: search_engine
+
   # 开发者平台规则
   - match:
       type: domain
@@ -36,9 +53,66 @@ url_rules:
       pattern: ".stackoverflow.com"
     strategy: developer_platform
 
+  # StackPrinter(重写后的 StackOverflow/StackExchange 问题页)
+  - match:
+      type: regex
+      pattern: '.*stackprinter\.com.*'
+    strategy: developer_platform
+
   - match:
       type: domain
       pattern: "gitlab.com"
+    strategy: developer_platform
+
+  - match:
+      type: domain_suffix
+      pattern: ".stackexchange.com"
+    strategy: developer_platform
+
+  - match:
+      type: regex
+      pattern: '\\b(superuser|serverfault|askubuntu)\\.com.*'
+    strategy: developer_platform
+
+  - match:
+      type: domain
+      pattern: "news.ycombinator.com"
+    strategy: developer_platform
+
+  - match:
+      type: regex
+      pattern: '.*reddit\\.com.*'
+    strategy: developer_platform
+
+  - match:
+      type: domain
+      pattern: "v2ex.com"
+    strategy: developer_platform
+
+  - match:
+      type: regex
+      pattern: '.*infoq\\.(cn|com).*'
+    strategy: developer_platform
+
+  # 中文技术社区
+  - match:
+      type: regex
+      pattern: '.*juejin\\.cn.*'
+    strategy: developer_platform
+
+  - match:
+      type: domain_suffix
+      pattern: ".csdn.net"
+    strategy: developer_platform
+
+  - match:
+      type: domain_suffix
+      pattern: ".cnblogs.com"
+    strategy: developer_platform
+
+  - match:
+      type: domain
+      pattern: "zhihu.com"
     strategy: developer_platform
 
   # 技术文档规则

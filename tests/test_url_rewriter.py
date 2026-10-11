@@ -86,6 +86,31 @@ class TestBasicRewrite:
         assert "question=12345" in result
         assert "service=stackoverflow" in result
 
+    def test_stackexchange_subdomain_printer(self):
+        """StackExchange 子域问题页应重写为 StackPrinter,service 取子域名"""
+        rewriter = URLRewriter()
+        url = "https://unix.stackexchange.com/questions/12345/how-to-tar"
+        result = rewriter.rewrite(url)
+        assert "stackprinter.com" in result
+        assert "question=12345" in result
+        assert "service=unix" in result
+
+    def test_www_stackexchange_not_rewritten(self):
+        """www.stackexchange.com 的 service 不存在,不应重写"""
+        rewriter = URLRewriter()
+        url = "https://www.stackexchange.com/questions/1/x"
+        assert rewriter.rewrite(url) == url
+
+    def test_superuser_family_printer(self):
+        """superuser/serverfault/askubuntu 问题页应重写为对应 service 的 StackPrinter"""
+        rewriter = URLRewriter()
+        for domain in ("superuser", "serverfault", "askubuntu"):
+            url = f"https://www.{domain}.com/questions/42/title"
+            result = rewriter.rewrite(url)
+            assert "stackprinter.com" in result, domain
+            assert "question=42" in result, domain
+            assert f"service={domain}" in result, domain
+
     def test_no_match(self):
         """不匹配规则的 URL 应该保持不变"""
         rewriter = URLRewriter()

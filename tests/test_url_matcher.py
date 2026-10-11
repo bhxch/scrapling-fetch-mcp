@@ -48,6 +48,31 @@ def test_builtin_rules_route_duckduckgo_subdomains_to_search_engine():
     # 不应误伤其他域
     assert matcher.match("https://example.com/?q=test") == "dual"
 
+def test_builtin_rules_extended_sites():
+    """扩展站点:新搜索引擎与常见技术社区的内置路由"""
+    matcher = URLMatcher()
+
+    # 搜索引擎
+    assert matcher.match("https://search.brave.com/search?q=test") == "search_engine"
+    assert matcher.match("https://www.startpage.com/sp/search?query=test") == "search_engine"
+    assert matcher.match("https://searx.be/search?q=test") == "search_engine"
+
+    # StackExchange 全家桶(含重写后的 StackPrinter)
+    assert matcher.match("https://unix.stackexchange.com/questions/1/x") == "developer_platform"
+    assert matcher.match("https://superuser.com/questions/1/x") == "developer_platform"
+    assert matcher.match(
+        "https://www.stackprinter.com/export?question=1&service=unix") == "developer_platform"
+
+    # 其他技术社区
+    assert matcher.match("https://news.ycombinator.com/item?id=1") == "developer_platform"
+    assert matcher.match("https://old.reddit.com/r/Python/comments/abc/t/") == "developer_platform"
+    assert matcher.match("https://v2ex.com/t/1") == "developer_platform"
+    assert matcher.match("https://www.infoq.cn/article/abc") == "developer_platform"
+    assert matcher.match("https://juejin.cn/post/1") == "developer_platform"
+    assert matcher.match("https://blog.csdn.net/u1/article/details/1") == "developer_platform"
+    assert matcher.match("https://www.cnblogs.com/t/p/1.html") == "developer_platform"
+    assert matcher.match("https://www.zhihu.com/question/1") == "developer_platform"
+
 def test_url_matcher_regex_match():
     """测试正则表达式匹配"""
     matcher = URLMatcher()
