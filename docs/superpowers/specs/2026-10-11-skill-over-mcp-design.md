@@ -137,8 +137,21 @@ reading, format/mode selection, and known limitations`。
 
 ## 5. 实施清单
 
-1. `skills/scrapling-fetch/SKILL.md`(新)。
-2. `src/scrapling_fetch_mcp/_skills.py`:SkillsExtension + entry 构造。
-3. `mcp.py`:注册 extension + instructions 指针。
-4. `_features.py`:3.3 的描述优化。
-5. 测试:单元 + MCP client 集成;pyproject 打包配置纳入 skills/。
+1. [x] `skills/scrapling-fetch/SKILL.md`(新)。
+2. [x] `src/scrapling_fetch_mcp/_skills.py`:SkillsExtension + entry 构造。
+3. [x] `mcp.py`:注册 extension + instructions 指针。
+4. [x] `_features.py`:3.3 的描述优化。
+5. [x] 测试:单元 + MCP client 集成;pyproject 打包配置纳入 skills/。
+
+验证结果(2026-10-11,MCP stdio client 真实验证,六步全部通过):
+initialize(2025-11-25,instructions 含 skill URI 指针)/
+list_resources 含 `skill://scrapling-fetch/SKILL.md` /
+resources/read 读回 2926 字符 frontmatter 原文 /
+`skills/list` 与 `skills/get`(有效 URI 返回 entry,未知 URI 返回
+`-32602`)经 client `send_request` 实测 / tools 列表正常(降级路径)。
+扩展能力位属 2026-07-28 modern-era 词汇,legacy 握手 surface 按SDK
+per-version 过滤不携带(SDK 预期行为);经 `server/discover` 探测确认
+`capabilities.extensions = {io.modelcontextprotocol/skills: {}}` 已上
+wire。digest(`sha256:cc8238d5...`)与 size(2944 字节)与打包文件
+逐字节一致。实测输出:`.temp/airead_serp_test/skill_mcp_verify.txt`
+(验证脚本 `.temp/airead_serp_test/verify_skill_mcp.py`,不入库)。
