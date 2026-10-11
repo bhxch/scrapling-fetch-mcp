@@ -67,9 +67,10 @@ url_rules:
       pattern: "news.ycombinator.com"
     strategy: developer_platform
 
+  # 锚定 host 段:裸域/www/old 等子域命中,query 中含 reddit.com 的 URL 不误伤
   - match:
       type: regex
-      pattern: '.*reddit\\.com.*'
+      pattern: '^https?://([^/]+\\.)?reddit\\.com(/|\\?|$)'
     strategy: developer_platform
 
   - match:
@@ -79,13 +80,13 @@ url_rules:
 
   - match:
       type: regex
-      pattern: '.*infoq\\.(cn|com).*'
+      pattern: '^https?://[^/]*infoq\\.(cn|com)'
     strategy: developer_platform
 
   # 中文技术社区
   - match:
       type: regex
-      pattern: '.*juejin\\.cn.*'
+      pattern: '^https?://([^/]+\\.)?juejin\\.cn'
     strategy: developer_platform
 
   - match:
@@ -114,18 +115,19 @@ url_rules:
       pattern: ".*developer.mozilla.org.*"
     strategy: documentation
 
-  # 搜索引擎兜底:startpage 域名异构
+  # 搜索引擎兜底:startpage 域名异构(锚定 host 段,避免子串误伤)
   - match:
       type: regex
-      pattern: '.*startpage\\.com.*'
+      pattern: '^https?://[^/]*startpage\\.com'
     strategy: search_engine
 
   # Searx/SearxNG 公共实例域名异构(如 searx.be、searxng.site),
-  # 用子串式 regex 覆盖;置于全部站点规则之后:先让更具体的站点规则
-  # 命中,子串式 regex 仅兜底(避免 github.com/searxng/searxng 被误路由)
+  # 锚定 host 段覆盖;词边界防住 notsearx.example.com 这类 host 内子串误伤;
+  # 置于全部站点规则之后:先让更具体的站点规则命中,此条仅兜底
+  # (github.com/searxng/searxng 的 path 段不会命中)
   - match:
       type: regex
-      pattern: ".*searx.*"
+      pattern: '^https?://[^/]*\\bsearx[^/]*'
     strategy: search_engine
 
 # 自定义策略（用户可扩展）
