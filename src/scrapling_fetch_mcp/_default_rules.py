@@ -21,8 +21,8 @@ url_rules:
     strategy: search_engine
 
   - match:
-      type: domain
-      pattern: "duckduckgo.com"
+      type: domain_suffix
+      pattern: ".duckduckgo.com"
     strategy: search_engine
 
   # 开发者平台规则
