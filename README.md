@@ -23,25 +23,23 @@ This tool is optimized for low-volume retrieval of documentation and reference m
 ```bash
 # Install scrapling-fetch-mcp
 uv tool install scrapling-fetch-mcp
-
-# Install browser binaries (REQUIRED - large downloads)
-uvx --from scrapling-fetch-mcp scrapling install
 ```
 
-**Important**: The browser installation downloads hundreds of MB of data and must complete before first use. If the MCP server times out on first use, the browsers may still be installing in the background. Wait a few minutes and try again.
+**Important**: the stealth browser (~1.2 GB) is fetched automatically on first startup — the server verifies it before listening. If the MCP server times out on first use, the download may still be in progress; wait a few minutes and try again, or pre-install as shown below. (`basic` mode needs no browser at all and works immediately.)
 
 ### Stealth Mode Requirements
 
 `stealth` and `max-stealth` modes drive a modified Firefox ([camoufox](https://github.com/daijro/camoufox)) with browserforge fingerprint data. Both are **fetched automatically on first server startup** (the server verifies them before listening), but you can pre-install to avoid a slow first run:
 
 ```bash
-# camoufox Firefox (~660 MB) from the daijro/camoufox GitHub releases
+# camoufox Firefox (~1.2 GB, no resume on interrupted downloads)
+# from the daijro/camoufox GitHub releases
 uvx --from scrapling-fetch-mcp camoufox fetch
 ```
 
 browserforge fingerprint data (~0.6 MB) is also auto-fetched on startup — from GitHub by default, falling back to the npm registry (`registry.npmjs.org`, then `registry.npmmirror.com`) when GitHub is unreachable.
 
-camoufox runs **headless** and does not need a desktop or Xvfb on a normal Linux server. (`basic` mode needs none of the above at all — it uses curl-cffi with no browser.)
+camoufox runs **headless** and does not need a desktop or Xvfb on a normal Linux server. If stealth launches fail with missing shared libraries, install the Firefox runtime OS packages once — this installs system packages via apt, not browsers (run as root): `uvx --from scrapling-fetch-mcp playwright install-deps firefox`. (`basic` mode needs none of the above at all — it uses curl-cffi with no browser.)
 
 ## Setup with Claude Desktop
 
