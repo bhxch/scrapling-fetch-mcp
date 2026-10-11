@@ -26,7 +26,7 @@ TOOL_PARAMS = {
             "type": str, "required": False, "default": "basic",
             "feature": "stealth",
             "config_key": "min_mode",
-            "description": "Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.",
+            "description": "Fetching mode: basic (fast, default), stealth (light anti-bot), max-stealth (strong anti-bot). Escalate to stealth when you get 403/202 or challenge pages.",
         },
         "format": {
             "type": str, "required": False, "default": None,
@@ -71,7 +71,7 @@ TOOL_PARAMS = {
             "type": str, "required": False, "default": "basic",
             "feature": "stealth",
             "config_key": "min_mode",
-            "description": "Fetching mode (basic, stealth, or max-stealth). The effective mode will be the maximum of this and the server's minimum mode setting.",
+            "description": "Fetching mode: basic (fast, default), stealth (light anti-bot), max-stealth (strong anti-bot). Escalate to stealth when you get 403/202 or challenge pages.",
         },
         "format": {
             "type": str, "required": False, "default": None,
@@ -100,13 +100,17 @@ S_FETCH_PAGE_DOCSTRING = (
     "\n"
     "IMPORTANT:\n"
     "- Use format='airead' for AI-optimized content extraction "
-    "(removes navigation, ads, etc., 30-50% token reduction)\n"
+    "(removes navigation, ads, etc., 30-50% token reduction). On search-engine "
+    "pages it returns structured entries: '### N. <title>' blocks with resolved "
+    "real links ('[查看原文](<url>)').\n"
     "- Use format='markdown' for standard markdown conversion\n"
     "- Use format='html' only when you need raw HTML structure\n"
     "\n"
-    "The airead format uses intelligent content extraction with URL-based routing "
-    "to specialized strategies for different website types (search engines, "
-    "documentation, developer platforms, etc.)."
+    "The airead format routes by URL to specialized strategies (search engines, "
+    "developer platforms, documentation). Known sites (DuckDuckGo, Reddit, "
+    "StackOverflow/StackExchange) are automatically rewritten to lighter "
+    "variants — pass the original URL. Fetching workflows: load skill "
+    "skill://scrapling-fetch/SKILL.md."
 )
 
 S_FETCH_PATTERN_DOCSTRING = (
@@ -119,5 +123,9 @@ S_FETCH_PATTERN_DOCSTRING = (
     "using specific start_index values.\n"
     "\n"
     "IMPORTANT: Use format='markdown' for reading or extracting content. Only use "
-    "format='html' when you specifically need the raw HTML structure."
+    "format='html' when you specifically need the raw HTML structure.\n"
+    "\n"
+    "The pattern is matched against the text produced by the chosen format "
+    "(markdown or html). Fetching workflows: load skill "
+    "skill://scrapling-fetch/SKILL.md."
 )

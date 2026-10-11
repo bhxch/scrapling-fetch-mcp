@@ -118,3 +118,23 @@ def test_auth_rebuild_reuses_instructions_and_extension():
     rebuild = src[src.index("token_verifier=StaticTokenVerifier"):]
     assert "instructions=SERVER_INSTRUCTIONS" in rebuild
     assert "extensions=[_skill_extension]" in rebuild
+
+
+def test_fetch_page_docstring_covers_contract():
+    from scrapling_fetch_mcp._features import S_FETCH_PAGE_DOCSTRING
+    assert "### N." in S_FETCH_PAGE_DOCSTRING          # SERP 输出契约
+    assert "skill://scrapling-fetch/SKILL.md" in S_FETCH_PAGE_DOCSTRING
+    assert "is_truncated" not in S_FETCH_PAGE_DOCSTRING  # 工作流归 skill
+
+
+def test_mode_description_concise():
+    from scrapling_fetch_mcp._features import TOOL_PARAMS
+    for tool in ("s_fetch_page", "s_fetch_pattern"):
+        desc = TOOL_PARAMS[tool]["mode"]["description"]
+        assert "403" in desc and "stealth" in desc
+        assert len(desc) < 200
+
+
+def test_pattern_docstring_states_text_domain():
+    from scrapling_fetch_mcp._features import S_FETCH_PATTERN_DOCSTRING
+    assert "markdown" in S_FETCH_PATTERN_DOCSTRING
