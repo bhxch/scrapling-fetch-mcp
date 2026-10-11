@@ -60,6 +60,8 @@ def test_builtin_rules_extended_sites():
     # StackExchange 全家桶(含重写后的 StackPrinter)
     assert matcher.match("https://unix.stackexchange.com/questions/1/x") == "developer_platform"
     assert matcher.match("https://superuser.com/questions/1/x") == "developer_platform"
+    assert matcher.match("https://serverfault.com/questions/1/x") == "developer_platform"
+    assert matcher.match("https://askubuntu.com/questions/1/x") == "developer_platform"
     assert matcher.match(
         "https://www.stackprinter.com/export?question=1&service=unix") == "developer_platform"
 
@@ -68,6 +70,7 @@ def test_builtin_rules_extended_sites():
     assert matcher.match("https://old.reddit.com/r/Python/comments/abc/t/") == "developer_platform"
     assert matcher.match("https://v2ex.com/t/1") == "developer_platform"
     assert matcher.match("https://www.infoq.cn/article/abc") == "developer_platform"
+    assert matcher.match("https://www.infoq.com/article/abc") == "developer_platform"
     assert matcher.match("https://juejin.cn/post/1") == "developer_platform"
     assert matcher.match("https://blog.csdn.net/u1/article/details/1") == "developer_platform"
     assert matcher.match("https://www.cnblogs.com/t/p/1.html") == "developer_platform"

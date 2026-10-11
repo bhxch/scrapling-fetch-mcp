@@ -101,6 +101,21 @@ class TestBasicRewrite:
         url = "https://www.stackexchange.com/questions/1/x"
         assert rewriter.rewrite(url) == url
 
+    def test_bare_stackexchange_domain_not_rewritten(self):
+        """stackexchange.com 裸域(无子域)的 service 不存在,不应重写"""
+        rewriter = URLRewriter()
+        url = "https://stackexchange.com/questions/42/x"
+        assert rewriter.rewrite(url) == url
+
+    def test_superuser_bare_domain_printer(self):
+        """superuser 裸域名(无 www)的问题页也应重写"""
+        rewriter = URLRewriter()
+        url = "https://superuser.com/questions/42/title"
+        result = rewriter.rewrite(url)
+        assert "stackprinter.com" in result
+        assert "question=42" in result
+        assert "service=superuser" in result
+
     def test_superuser_family_printer(self):
         """superuser/serverfault/askubuntu 问题页应重写为对应 service 的 StackPrinter"""
         rewriter = URLRewriter()

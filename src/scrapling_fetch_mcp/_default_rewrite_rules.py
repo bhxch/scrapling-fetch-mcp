@@ -39,7 +39,7 @@ BUILTIN_REWRITE_RULES = [
     },
     # StackExchange 子域 (如 unix.stackexchange.com): questions → StackPrinter
     {
-        "match": {"type": "regex", "pattern": r"https://(?!www\.)([a-z0-9-]+)\.stackexchange\.com/questions/(\d+)/.*$"},
+        "match": {"type": "domain_suffix", "pattern": ".stackexchange.com"},
         "rewrite": {
             "type": "regex_replace",
             "pattern": r"https://(?!www\.)([a-z0-9-]+)\.stackexchange\.com/questions/(\d+)/.*$",

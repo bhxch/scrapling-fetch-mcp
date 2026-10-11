@@ -30,18 +30,6 @@ url_rules:
       pattern: ".brave.com"
     strategy: search_engine
 
-  - match:
-      type: regex
-      pattern: '.*startpage\\.com.*'
-    strategy: search_engine
-
-  # Searx/SearxNG 公共实例域名异构(如 searx.be、searxng.site),
-  # 用子串式 regex 覆盖;规则靠后,降低误伤概率
-  - match:
-      type: regex
-      pattern: ".*searx.*"
-    strategy: search_engine
-
   # 开发者平台规则
   - match:
       type: domain
@@ -56,7 +44,7 @@ url_rules:
   # StackPrinter(重写后的 StackOverflow/StackExchange 问题页)
   - match:
       type: regex
-      pattern: '.*stackprinter\.com.*'
+      pattern: '.*stackprinter\\.com.*'
     strategy: developer_platform
 
   - match:
@@ -125,6 +113,20 @@ url_rules:
       type: regex
       pattern: ".*developer.mozilla.org.*"
     strategy: documentation
+
+  # 搜索引擎兜底:startpage 域名异构
+  - match:
+      type: regex
+      pattern: '.*startpage\\.com.*'
+    strategy: search_engine
+
+  # Searx/SearxNG 公共实例域名异构(如 searx.be、searxng.site),
+  # 用子串式 regex 覆盖;置于全部站点规则之后:先让更具体的站点规则
+  # 命中,子串式 regex 仅兜底(避免 github.com/searxng/searxng 被误路由)
+  - match:
+      type: regex
+      pattern: ".*searx.*"
+    strategy: search_engine
 
 # 自定义策略（用户可扩展）
 custom_strategies: []
