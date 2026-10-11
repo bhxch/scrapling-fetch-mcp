@@ -285,6 +285,8 @@ def run_server():
                 issuer_url=f"http://{config.host}:{config.port}/",
                 resource_server_url=f"http://{config.host}:{config.port}/",
             ),
+            instructions=SERVER_INSTRUCTIONS,
+            extensions=[_skill_extension] if _skill_extension else [],
         )
 
     # Build and register tools dynamically (registers onto the current global mcp)

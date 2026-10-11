@@ -104,3 +104,17 @@ def test_mcp_server_registers_extension_and_instruction():
     registered = getattr(mcp, "_extensions", [])
     assert any(e.identifier == "io.modelcontextprotocol/skills"
                for e in registered)
+
+
+def test_auth_rebuild_reuses_instructions_and_extension():
+    """auth 重建分支与模块级构造共用同一 SERVER_INSTRUCTIONS 与扩展单例。"""
+    import inspect
+
+    import scrapling_fetch_mcp.mcp as mcp_module
+
+    assert getattr(mcp_module, "_skill_extension", None) is not None
+    assert SKILL_URI in mcp_module.SERVER_INSTRUCTIONS
+    src = inspect.getsource(mcp_module)
+    rebuild = src[src.index("token_verifier=StaticTokenVerifier"):]
+    assert "instructions=SERVER_INSTRUCTIONS" in rebuild
+    assert "extensions=[_skill_extension]" in rebuild
