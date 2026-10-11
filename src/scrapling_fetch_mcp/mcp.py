@@ -7,7 +7,6 @@ from mcp.server.mcpserver import MCPServer
 from scrapling_fetch_mcp._auth import StaticTokenVerifier
 from scrapling_fetch_mcp._browser_check import (
     ensure_browserforge_data,
-    ensure_browsers_installed,
     ensure_camoufox,
 )
 from scrapling_fetch_mcp._config import config, init_config_from_env
@@ -280,8 +279,6 @@ def run_server():
     # the npm registry when the official GitHub download path is unreachable).
     ensure_browserforge_data()
     ensure_camoufox()
-    # Ensure browsers are installed (handles version mismatches after updates)
-    ensure_browsers_installed()
 
     # Initialize concurrency guard (both stdio and http run on one event loop;
     # MCP clients may issue concurrent tool calls even over stdio).

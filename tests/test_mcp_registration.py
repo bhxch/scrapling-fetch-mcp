@@ -183,7 +183,6 @@ class TestRunServerTransport:
             monkeypatch.delenv(k, raising=False)
         monkeypatch.setattr(mcp_module, "ensure_browserforge_data", lambda: None)
         monkeypatch.setattr(mcp_module, "ensure_camoufox", lambda: None)
-        monkeypatch.setattr(mcp_module, "ensure_browsers_installed", lambda: None)
         captured = []
         monkeypatch.setattr(
             mcp_module.MCPServer, "run", lambda self, **kw: captured.append(kw)
