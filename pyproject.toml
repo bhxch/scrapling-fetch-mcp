@@ -35,14 +35,16 @@ dependencies = [
     "playwright>=1.55.0",
     "pyyaml>=6.0",
     "readability-lxml>=0.8.1",
-    # Capped below 0.4 on purpose: scrapling 0.4.x imports patchright
-    # unconditionally at module level while declaring it only in the
-    # optional [fetchers] extra, and drops the camoufox engine our stealth
-    # modes run on. We cover the fetcher dependencies ourselves and do not
-    # declare patchright, so a 0.4.x resolve breaks every fetch mode.
-    # Revisit only as a deliberate 0.4.x migration (add patchright, drop
-    # camoufox machinery).
-    "scrapling>=0.3.6,<0.4",
+    # Pinned to 0.3.6 on purpose. From 0.3.7 upstream ships engines that
+    # import patchright at module level (first _controllers.py, and on the
+    # stealth fetcher chain from 0.3.13's _stealth.py), and 0.4.x goes
+    # further: patchright imported unconditionally while only declared in
+    # the optional [fetchers] extra, camoufox engine removed entirely. We
+    # cover fetcher dependencies ourselves and do not declare patchright,
+    # so anything above 0.3.6 breaks fetch modes at import time.
+    # Revisit only as a deliberate upstream migration (add patchright,
+    # rework stealth modes).
+    "scrapling>=0.3.6,<0.3.7",
     "trafilatura>=1.6.0",
 ]
 
