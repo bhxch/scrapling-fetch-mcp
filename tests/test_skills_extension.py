@@ -95,3 +95,12 @@ def test_missing_skill_file_disables_extension(monkeypatch):
     assert ext.methods() == []
     with pytest.raises(ValueError):
         ext.skill_entry()
+
+
+def test_mcp_server_registers_extension_and_instruction():
+    from scrapling_fetch_mcp.mcp import mcp, SERVER_INSTRUCTIONS
+
+    assert SKILL_URI in SERVER_INSTRUCTIONS
+    registered = getattr(mcp, "_extensions", [])
+    assert any(e.identifier == "io.modelcontextprotocol/skills"
+               for e in registered)

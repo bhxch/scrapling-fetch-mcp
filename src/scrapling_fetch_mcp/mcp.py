@@ -18,10 +18,23 @@ from scrapling_fetch_mcp._features import (
     S_FETCH_PATTERN_DOCSTRING,
 )
 from scrapling_fetch_mcp._scrapling import init_guard
+from scrapling_fetch_mcp._skills import SKILL_URI, build_extension
 from scrapling_fetch_mcp._tool_factory import build_tool_function
 from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
 
-mcp = MCPServer("scrapling-fetch-mcp")
+_skill_extension = build_extension()
+
+SERVER_INSTRUCTIONS = (
+    "Fetch pages with s_fetch_page / s_fetch_pattern. Prefer "
+    "format='airead'. Load skill " + SKILL_URI + " via the skills "
+    "extension for detailed fetching workflows."
+)
+
+mcp = MCPServer(
+    "scrapling-fetch-mcp",
+    instructions=SERVER_INSTRUCTIONS,
+    extensions=[_skill_extension] if _skill_extension else [],
+)
 
 
 def _register_tool(name, param_configs, base_docstring, impl_func):
