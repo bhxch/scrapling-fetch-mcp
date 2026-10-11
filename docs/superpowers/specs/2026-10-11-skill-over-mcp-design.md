@@ -113,6 +113,10 @@ reading, format/mode selection, and known limitations`。
 "useful if a previous fetch was truncated",再写是重复)与 URL 重写
 说明(工作流知识,归 skill)。
 
+修订:URL 重写以单次输入契约形式保留在 S_FETCH_PAGE 描述中(告知
+url 参数按原始 URL 传、工具自动改写),工作流细节仍归 skill(实施时
+经 plan Task 4 确定)。
+
 ### 3.4 测试与验证
 
 - 单元测试:extension 的 entry shape(frontmatter 逐字、digest/size
