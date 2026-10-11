@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from mcp.server.extension import Extension, MethodBinding, ResourceBinding
 from mcp.server.mcpserver.resources import TextResource
 from mcp.shared.exceptions import MCPError
+from mcp_types import RequestParams
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,11 @@ _ENTRY_TTL_MS = 300000
 _CACHE_SCOPE = "public"
 
 
-class GetSkillParams(BaseModel):
-    """Params of the skills/get method: the SKILL.md URI."""
+class GetSkillParams(RequestParams):
+    """Params of the skills/get method: the SKILL.md URI.
+
+    继承 SDK 的 RequestParams 以统一解析 `_meta`。
+    """
     uri: str
 
 
@@ -53,6 +57,18 @@ class SkillsExtension(Extension):
 
     def __init__(self) -> None:
         self._markdown: Optional[str] = load_skill_markdown()
+        # 预解析 frontmatter:SKILL.md 畸形时禁用扩展(走 available()=False
+        # 路径),而不是让 server 构造期崩溃;也不得降级为空 dict,否则会
+        # 发布缺 name/description 的 entry,违反 SEP-2640。
+        try:
+            if not isinstance(self._frontmatter(), dict):
+                raise ValueError("frontmatter is not a mapping")
+        except (yaml.YAMLError, ValueError, AttributeError) as exc:
+            if self._markdown is not None:
+                logger.warning(
+                    "Invalid SKILL.md frontmatter (%s), skills extension disabled",
+                    exc)
+            self._markdown = None
 
     def available(self) -> bool:
         return self._markdown is not None

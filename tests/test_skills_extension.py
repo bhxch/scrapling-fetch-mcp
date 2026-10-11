@@ -74,6 +74,7 @@ async def test_skills_get_method(ext):
     methods = {m.method: m for m in ext.methods()}
     result = await methods["skills/get"].handler(None, type("P", (), {"uri": SKILL_URI})())
     assert result["skill"]["uri"] == SKILL_URI
+    assert "ttlMs" in result and "cacheScope" in result
 
 
 @pytest.mark.asyncio
@@ -95,6 +96,18 @@ def test_missing_skill_file_disables_extension(monkeypatch):
     assert ext.methods() == []
     with pytest.raises(ValueError):
         ext.skill_entry()
+
+
+def test_malformed_frontmatter_disables_extension(monkeypatch):
+    """畸形 SKILL.md 只禁用扩展,不导致 server 构造期崩溃。"""
+    monkeypatch.setattr("scrapling_fetch_mcp._skills.load_skill_markdown",
+                        lambda: "---\n: [broken\n---\nbody")
+    ext = SkillsExtension()
+    assert ext.available() is False
+    assert ext.resources() == []
+    assert ext.methods() == []
+    from scrapling_fetch_mcp._skills import build_extension
+    assert build_extension() is None
 
 
 def test_mcp_server_registers_extension_and_instruction():
@@ -137,4 +150,5 @@ def test_mode_description_concise():
 
 def test_pattern_docstring_states_text_domain():
     from scrapling_fetch_mcp._features import S_FETCH_PATTERN_DOCSTRING
-    assert "markdown" in S_FETCH_PATTERN_DOCSTRING
+    assert ("matched against the text produced by the chosen format"
+            in S_FETCH_PATTERN_DOCSTRING)
