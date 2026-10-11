@@ -1,5 +1,7 @@
+import base64
 import re
 from abc import ABC, abstractmethod
+from urllib.parse import parse_qs, unquote, urlparse
 import trafilatura
 from readability import Document
 from bs4 import BeautifulSoup
@@ -114,7 +116,7 @@ class SearchEngineStrategy(ExtractorStrategy):
 
         # 2. 提取搜索结果
         markdown_parts.append("## Search Results\n\n")
-        results = self._extract_search_results(soup, url)
+        results = self._collect_results(soup, url)
 
         for i, result in enumerate(results, 1):
             markdown_parts.append(f"### {i}. {result['title']}\n\n")
@@ -147,6 +149,134 @@ class SearchEngineStrategy(ExtractorStrategy):
 
         return None
 
+    def _collect_results(self, soup, page_url):
+        """依次尝试:Bing b_algo 结构通道 → 通用 heading 启发式通道。"""
+        results = self._extract_bing_results(soup)
+        if results:
+            return results
+        return self._extract_search_results(soup, page_url)
+
+    def _extract_bing_results(self, soup):
+        """Bing 新版布局:结果条目是 <li class="b_algo">,按结构直接提取。
+
+        该布局下 h2 的父级链上没有落入文本窗口的 div,通用启发式会全部
+        落空,因此优先走确定性选择器;链接为 bing.com/ck/a 重定向,需解码。
+        """
+        results = []
+        seen_urls = set()
+
+        for li in soup.select('li.b_algo'):
+            heading = li.find(['h2', 'h3'])
+            if not heading:
+                continue
+            title = heading.get_text(' ', strip=True)
+            if self._is_ad_or_noise(title):
+                continue
+
+            link = li.find('a', href=self._has_result_href)
+            if not link:
+                continue
+
+            url = self._normalize_result_url(link.get('href'))
+            if 'bing.com/ck/' in url:
+                real_url = self._extract_real_url(li, url)
+                if real_url and real_url != url:
+                    url = real_url
+
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            snippet = ''
+            p = li.find('p')
+            if p:
+                snippet = ' '.join(p.get_text(' ', strip=True).split())[:400]
+            if not snippet:
+                snippet = self._extract_snippet(li, title)
+
+            results.append({
+                'title': title,
+                'url': url,
+                'cite': self._extract_cite(li, url),
+                'snippet': snippet
+            })
+
+        return results
+
+    @staticmethod
+    def _has_result_href(href):
+        """结果链接的 href 形态:完整 URL、协议相对、Google 相对跳转。"""
+        return bool(href) and (
+            href.startswith('http')
+            or href.startswith('//')
+            or href.startswith('/goto?')
+            or href.startswith('/url?')
+        )
+
+    def _normalize_result_url(self, href: str) -> str:
+        """归一化结果链接为尽可能真实的 URL。
+
+        - //example.com        → https://example.com
+        - /url?q=<encoded>     → 解析 q 参数(旧版 Google 重定向)
+        - /goto?url=<token>    → 服务端跟随 302(新版 Google 重定向,token
+                                 为 Tink 加密的 protobuf,本地无法解码)
+        失败时保留原始链接,由调用方继续使用。
+        """
+        if href.startswith('//'):
+            return 'https:' + href
+
+        if href.startswith('/goto?') or href.startswith('/url?'):
+            absolute = 'https://www.google.com' + href
+            params = parse_qs(urlparse(absolute).query)
+
+            if href.startswith('/goto?'):
+                token = params.get('url', [''])[0]
+                if token:
+                    real = self._follow_goto_redirect(token)
+                    if real:
+                        return real
+                return absolute
+
+            q = params.get('q', [''])[0]
+            if q.startswith('http'):
+                return q
+            return absolute
+
+        return href
+
+    def _follow_goto_redirect(self, token: str, timeout: float = 5.0):
+        """跟随 Google /goto 重定向获取真实 URL。
+
+        token 由 Google 服务端签名加密且有时效,只能通过请求
+        https://www.google.com/goto?url=<token> 读取 302 的 Location 头
+        获得;必须使用 www 主机名(裸域会多一层 301)。任何失败都返回
+        None,调用方回退为原始链接。
+        """
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"https://www.google.com/goto?url={token}",
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0"},
+        )
+
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        try:
+            with urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout) as resp:
+                # 非 3xx 响应(如 200)不包含目标信息
+                return None
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                location = e.headers.get("Location")
+                if location and location.startswith("http"):
+                    return location
+            return None
+        except Exception:
+            return None
+
     def _extract_search_results(self, soup, page_url):
         """
         提取搜索结果条目（通用启发式方法）
@@ -157,14 +287,15 @@ class SearchEngineStrategy(ExtractorStrategy):
         3. 从容器中启发式提取：标题、URL、cite、snippet
         """
         results = []
-        seen_urls = set()  # 去重
+        seen_urls = set()  # 去重(基于归一化后的 URL)
+        seen_hrefs = set()  # 粗去重(基于原始 href,避免重复解析跳转)
 
         # 查找所有h3和h2标签（搜索结果标题）
         # 优先h3（Google），然后h2（Bing）
         heading_tags = soup.find_all(['h3', 'h2'])
 
         for heading in heading_tags:
-            title = heading.get_text(strip=True)
+            title = heading.get_text(' ', strip=True)
 
             # 跳过广告和无关内容
             if self._is_ad_or_noise(title):
@@ -176,21 +307,22 @@ class SearchEngineStrategy(ExtractorStrategy):
             if not container:
                 continue
 
-            # 从容器中提取链接（支持http和协议相对URL）
-            link = container.find('a', href=lambda x: x and (x.startswith('http') or x.startswith('//')))
+            # 从容器中提取链接(支持完整 URL、协议相对 URL 和相对跳转)
+            link = container.find('a', href=self._has_result_href)
             if not link:
                 continue
 
-            url = link.get('href')
-
-            # 处理协议相对URL（DuckDuckGo使用）
-            if url.startswith('//'):
-                url = 'https:' + url
-
-            # 去重
-            if url in seen_urls:
+            href = link.get('href')
+            if href in seen_hrefs:
                 continue
-            seen_urls.add(url)
+            seen_hrefs.add(href)
+
+            # 归一化为真实 URL(协议相对、/url?q=、/goto?url= 等)
+            url = self._normalize_result_url(href)
+
+            # 跳过 Google 静态资源链接(视频缩略图等)
+            if 'gstatic.com' in url:
+                continue
 
             # 跳过搜索引擎自己的链接（但允许重定向链接）
             # Bing使用ck/作为重定向，Google使用url，DuckDuckGo使用uddg
@@ -238,8 +370,8 @@ class SearchEngineStrategy(ExtractorStrategy):
                 current = current.parent
                 continue
 
-            # 检查是否包含链接（支持http和协议相对URL）
-            if not current.find('a', href=lambda x: x and (x.startswith('http') or x.startswith('//'))):
+            # 检查是否包含链接(支持完整 URL、协议相对 URL 和相对跳转)
+            if not current.find('a', href=self._has_result_href):
                 current = current.parent
                 continue
 
@@ -432,8 +564,6 @@ class SearchEngineStrategy(ExtractorStrategy):
         # 0. 从重定向URL提取真实URL（DuckDuckGo和Bing）
         if 'duckduckgo.com/l/' in redirect_url or 'bing.com/ck/' in redirect_url:
             try:
-                from urllib.parse import urlparse, parse_qs, unquote
-
                 parsed = urlparse(redirect_url)
 
                 # DuckDuckGo: /l/?uddg=URL
@@ -444,9 +574,15 @@ class SearchEngineStrategy(ExtractorStrategy):
                         if real_url.startswith('http'):
                             return real_url
 
-                # Bing: /ck/a?!&&p=ENCODED_URL (base64或hex)
-                # Bing的URL较难提取，使用备选方案
-            except:
+                # Bing: /ck/a?...&u=a1<urlsafe_base64>(去 a1 前缀后补 padding 解码)
+                match = re.search(r'[?&]u=a1([A-Za-z0-9_\-]+)', redirect_url)
+                if match:
+                    payload = match.group(1)
+                    payload += '=' * (-len(payload) % 4)
+                    decoded = base64.urlsafe_b64decode(payload).decode('utf-8', 'ignore')
+                    if decoded.startswith('http'):
+                        return decoded
+            except Exception:
                 pass
 
         # 1. 从cite元素提取
@@ -473,28 +609,34 @@ class SearchEngineStrategy(ExtractorStrategy):
         # 3. 备选：返回原始URL
         return redirect_url
 
-    def _is_ad_or_noise(self, title):
-        """判断是否是广告或噪音"""
-        noise_keywords = [
-            'Sponsored',
-            'Ad',
-            'Advertisement',
-            'People also search for',
-            'Related searches',
-            'Quick Settings',
-            'Sign in',
-            'Accessibility',
-            'Feedback',
-            'People also ask',
-            'Images',
-            'Videos',
-            'News',
-            'Shopping',
-            'Maps'
-        ]
+    # 噪音关键词按整词匹配,避免子串误杀(如 "Ad" 命中 "AI Mode" 中的 "ad")
+    _NOISE_KEYWORDS = [
+        'Sponsored',
+        'Ad',
+        'Ads',
+        'Advertisement',
+        'People also search for',
+        'Related searches',
+        'Quick Settings',
+        'Sign in',
+        'Accessibility',
+        'Feedback',
+        'People also ask',
+        'Web results',
+        'Images',
+        'Videos',
+        'News',
+        'Shopping',
+        'Maps'
+    ]
+    _NOISE_PATTERN = re.compile(
+        r"\b(?:" + "|".join(re.escape(k) for k in _NOISE_KEYWORDS) + r")\b",
+        re.IGNORECASE,
+    )
 
-        title_lower = title.lower()
-        return any(keyword.lower() in title_lower for keyword in noise_keywords)
+    def _is_ad_or_noise(self, title):
+        """判断是否是广告或噪音(整词匹配)"""
+        return bool(self._NOISE_PATTERN.search(title))
 
 
 class DeveloperPlatformStrategy(ExtractorStrategy):
