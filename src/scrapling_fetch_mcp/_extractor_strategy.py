@@ -400,49 +400,6 @@ class SearchEngineStrategy(ExtractorStrategy):
 
         return ''
 
-        # 3. 启发式方法：从文本中提取
-        all_text = container.get_text(separator='\n', strip=True)
-        lines = [line.strip() for line in all_text.split('\n') if line.strip()]
-
-        snippet_lines = []
-        found_cite = False
-
-        for line in lines:
-            # 跳过标题（精确匹配或包含）
-            if line == title or (len(title) > 10 and title in line):
-                continue
-
-            # 检测cite行（包含›符号或单独的URL）
-            if ('›' in line and len(line) < 150) or (line.startswith('http') and '›' in line):
-                found_cite = True
-                continue
-
-            # 跳过独立的URL（没有›）
-            if line.startswith('http') and len(line) < 200 and ' ' not in line:
-                continue
-
-            # 跳过特殊噪音
-            if line in ['Read more', 'Read more', 'People also ask', 'Related searches']:
-                continue
-
-            # 跳过过短的行（但保留日期行）
-            if len(line) < 20 and not re.match(r'^\w+ \d{1,2}, \d{4}', line):
-                continue
-
-            # 保留这一行
-            if found_cite and len(line) >= 20:  # cite之后的行才是snippet
-                snippet_lines.append(line)
-
-        # 合并所有snippet行
-        if snippet_lines:
-            snippet = ' '.join(snippet_lines)
-            # 限制长度
-            if len(snippet) > 400:
-                snippet = snippet[:400] + '...'
-            return snippet
-
-        return ''
-
     def _is_search_engine_search_page(self, url, page_url):
         """
         判断是否是搜索引擎自己的搜索页面（需要跳过）
