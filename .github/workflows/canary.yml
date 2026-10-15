@@ -3,9 +3,8 @@
 # Dependencies float with `>=` floors, so a fresh resolve always picks the
 # newest allowed versions — including camoufox's browser binary, which moves
 # independently of its PyPI package via GitHub releases. This workflow
-# resolves everything fresh, fetches the latest browser, runs the test suite
-# plus one real stealth fetch, and opens a deduplicated issue on failure
-# (closing it again on the first green run).
+# resolves everything fresh, fetches the latest browser, and runs the test
+# suite plus one real stealth fetch.
 name: dependency-canary
 
 on:
@@ -15,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: dependency-canary
@@ -50,53 +48,42 @@ jobs:
 
       - name: Look up latest camoufox release
         id: camoufox-release
+        # Unauthenticated GitHub API, subject to shared runner IP rate
+        # limits — let curl retry before failing the whole run.
         run: >
-          echo "tag=$(curl -fsSL https://api.github.com/repos/daijro/camoufox/releases/latest
+          echo "tag=$(curl --retry 5 --retry-delay 30 --retry-all-errors -fsSL
+          https://api.github.com/repos/daijro/camoufox/releases/latest
           | jq -r .tag_name)" >> "$GITHUB_OUTPUT"
 
       - name: Restore camoufox browser cache
+        id: camoufox-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/camoufox
           key: camoufox-${{ steps.camoufox-release.outputs.tag }}
 
       - name: Fetch camoufox browser if needed
-        # camoufox fetch is idempotent: it compares the installed version
-        # against the latest release and only downloads on a mismatch.
-        run: uv run --no-sync python -m camoufox fetch
+        # camoufox fetch re-queries the unauthenticated GitHub releases API
+        # on every run even when the browser is current, and 403s when the
+        # shared runner IP is rate limited. An exact cache hit already
+        # guarantees the browser matches the latest tag, so skip the call
+        # entirely; otherwise retry with exponential backoff.
+        if: steps.camoufox-cache.outputs.cache-hit != 'true'
+        run: |
+          for backoff in 0 30 60 120; do
+            if [ "$backoff" -gt 0 ]; then
+              echo "Retrying in ${backoff}s..."
+              sleep "$backoff"
+            fi
+            if uv run --no-sync python -m camoufox fetch; then
+              exit 0
+            fi
+            echo "camoufox fetch failed"
+          done
+          exit 1
 
       - name: Run test suite
         run: uv run --no-sync pytest -q
 
       - name: Real stealth smoke fetch
         run: uv run --no-sync python scripts/canary_smoke.py
-
-      - name: Open or update canary issue on failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh label create deps-canary --color D93F0B --force
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          versions="$(cat .temp/canary-versions.txt 2>/dev/null || echo unknown)"
-          body=$(printf 'The daily dependency canary failed.\n\nRun: %s\n\nResolved versions:\n\n```\n%s\n```\n' \
-            "$run_url" "$versions")
-          number=$(gh issue list --label deps-canary --state open --json number --jq '.[0].number')
-          if [ -z "$number" ]; then
-            gh issue create --label deps-canary \
-              --title "Dependency canary failed ($(date -u +%F))" \
-              --body "$body"
-          else
-            gh issue comment "$number" --body "$body"
-          fi
-
-      - name: Close canary issue after a green run
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          versions="$(paste -sd' ' .temp/canary-versions.txt 2>/dev/null || echo unknown)"
-          for number in $(gh issue list --label deps-canary --state open --json number --jq '.[].number'); do
-            gh issue close "$number" --comment \
-              "Canary passed on $(date -u +%F) with: $versions"
-          done
