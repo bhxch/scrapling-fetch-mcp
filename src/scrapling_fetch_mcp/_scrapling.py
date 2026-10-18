@@ -2,6 +2,7 @@ from contextlib import redirect_stdout
 from os import devnull
 from typing import Any, Callable, Optional
 
+from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._concurrency import ConcurrencyGuard
 
 _guard: Optional[ConcurrencyGuard] = None
@@ -29,6 +30,9 @@ async def _do_browse(
                 url,
                 headless=True,
                 network_idle=True,
+                # camoufox 默认 30s 导航超时,对故意拖延 load 事件的站点
+                # (如 Brave Search)不够;沿用全局 fetch_timeout(秒)
+                timeout=int(config.fetch_timeout * 1000),
                 page_action=page_action,
             )
         elif mode == "max-stealth":
@@ -39,6 +43,7 @@ async def _do_browse(
                 network_idle=True,
                 disable_resources=False,
                 block_images=False,
+                timeout=int(config.fetch_timeout * 1000),
                 page_action=page_action,
             )
         else:

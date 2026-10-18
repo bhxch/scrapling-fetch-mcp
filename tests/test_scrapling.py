@@ -65,3 +65,32 @@ class TestBrowseUrlGuard:
         assert result == "page"
         assert scrapling_mod._guard is None
         assert called == ["http://y"]
+
+
+@pytest.mark.asyncio
+async def test_stealth_fetch_uses_configured_timeout(monkeypatch):
+    """stealth/max-stealth 应把 fetch_timeout(秒)转成毫秒传给 camoufox"""
+    from scrapling_fetch_mcp._config import config
+
+    captured = {}
+
+    async def fake_fetch(url, **kwargs):
+        captured.update(kwargs)
+        resp = MagicMock()
+        resp.status = 200
+        resp.body = b"<html></html>"
+        resp.html_content = "<html></html>"
+        return resp
+
+    monkeypatch.setattr(
+        "scrapling.fetchers.StealthyFetcher.async_fetch", fake_fetch)
+
+    original = config.fetch_timeout
+    try:
+        config.set_fetch_timeout(45)
+        await scrapling_mod._do_browse("http://x", "stealth")
+        assert captured["timeout"] == 45000
+        await scrapling_mod._do_browse("http://x", "max-stealth")
+        assert captured["timeout"] == 45000
+    finally:
+        config.set_fetch_timeout(original)
