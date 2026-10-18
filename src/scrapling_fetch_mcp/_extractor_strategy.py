@@ -616,34 +616,42 @@ class SearchEngineStrategy(ExtractorStrategy):
         # 3. 备选：返回原始URL
         return redirect_url
 
-    # 噪音关键词按整词匹配,避免子串误杀(如 "Ad" 命中 "AI Mode" 中的 "ad")
+    # 广告类词:标题中出现(整词)即视为广告
     _NOISE_KEYWORDS = [
         'Sponsored',
         'Ad',
         'Ads',
         'Advertisement',
-        'People also search for',
-        'Related searches',
-        'Quick Settings',
-        'Sign in',
-        'Accessibility',
-        'Feedback',
-        'People also ask',
-        'Web results',
-        'Images',
-        'Videos',
-        'News',
-        'Shopping',
-        'Maps'
     ]
     _NOISE_PATTERN = re.compile(
         r"\b(?:" + "|".join(re.escape(k) for k in _NOISE_KEYWORDS) + r")\b",
         re.IGNORECASE,
     )
 
+    # 界面区块词:News/Videos/Images 等是普通英文词,出现在真实结果标题里
+    # 很常见,仅当标题本身就是这个词(即导航标签被当成标题)时才剔除
+    _UI_NOISE_TITLES = {
+        'people also search for',
+        'related searches',
+        'quick settings',
+        'sign in',
+        'accessibility',
+        'feedback',
+        'people also ask',
+        'web results',
+        'images',
+        'videos',
+        'news',
+        'shopping',
+        'maps',
+        '网页搜索结果',
+    }
+
     def _is_ad_or_noise(self, title):
-        """判断是否是广告或噪音(整词匹配)"""
-        return bool(self._NOISE_PATTERN.search(title))
+        """判断是否是广告或噪音(广告整词匹配,界面词仅独立成标题时命中)"""
+        if self._NOISE_PATTERN.search(title):
+            return True
+        return title.strip().lower() in self._UI_NOISE_TITLES
 
 
 class DeveloperPlatformStrategy(ExtractorStrategy):

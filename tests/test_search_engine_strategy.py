@@ -144,6 +144,17 @@ def test_noise_word_boundary():
     assert not strategy._is_ad_or_noise("Adobe Photoshop tutorial")
 
 
+def test_ui_noise_words_only_match_standalone_titles():
+    """News/Videos 等普通英文词仅在独立成标题时视为界面噪音"""
+    strategy = SearchEngineStrategy()
+    assert strategy._is_ad_or_noise("News")
+    assert strategy._is_ad_or_noise("Videos")
+    assert strategy._is_ad_or_noise("网页搜索结果")
+    assert not strategy._is_ad_or_noise("China rainfall news report")
+    assert not strategy._is_ad_or_noise("Best videos of the year")
+    assert not strategy._is_ad_or_noise("Maps and routing explained")
+
+
 def test_gstatic_thumbnail_links_skipped():
     """Google 视频缩略图等静态资源链接不作为结果"""
     html = GOTO_HTML.replace("/goto?url=CAES1234token",
@@ -215,3 +226,22 @@ def test_extract_real_url_rejects_truncated_cite():
     fallback = "https://www.google.com/goto?url=x"
     assert strategy._extract_real_url(soup.find("div"), fallback) == fallback
 
+CITE_TRUNCATED_HTML = """
+<html><body><div class="container">
+  <h3><a href="/goto?url=CAESxyz">China rainfall news report</a></h3>
+  <cite>https://www.chinanews.com.cn/10...</cite>
+  <div>Heavy rain hit Beijing on October 17 2026, breaking the October
+  single-day rainfall record set in 1968, with the observatory recording
+  more than seventy millimeters of precipitation in total across the
+  entire city area.</div>
+</div></body></html>
+"""
+
+
+def test_cite_truncated_text_not_used_as_real_url(monkeypatch):
+    """goto 解析失败且 cite 为截断文本时,保留跳转链接而非坏 URL"""
+    strategy = SearchEngineStrategy()
+    monkeypatch.setattr(strategy, "_follow_goto_redirect", lambda token, timeout=5.0: None)
+    md = strategy.extract(CITE_TRUNCATED_HTML, "https://www.google.com/search?q=rain")
+    assert "chinanews.com.cn/10..." not in md
+    assert "[查看原文](https://www.google.com/goto?url=CAESxyz)" in md
