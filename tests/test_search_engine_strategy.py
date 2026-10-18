@@ -151,3 +151,57 @@ def test_gstatic_thumbnail_links_skipped():
     md = SearchEngineStrategy().extract(html, "https://www.google.com/search?q=asyncio")
     assert "gstatic.com" not in md
     assert "### 1." not in md
+
+
+def ddg_result(title: str, target: str, snippet: str) -> str:
+    """DDG html 版单条结果:uddg 重定向 + 足量 snippet(过 150 字符文本窗口)"""
+    from urllib.parse import quote
+
+    href = "//duckduckgo.com/l/?uddg=" + quote(target, safe="") + "&rut=x"
+    return f"""
+    <div class="result">
+      <div class="links_main result__body">
+        <h2 class="result__title"><a class="result__a" href="{href}">{title}</a></h2>
+        <a class="result__snippet">{snippet}</a>
+      </div>
+    </div>
+    """
+
+
+DDG_SHARED_LIST_HTML = """
+<html><body>
+<div class="serp__results"><div class="results">
+  {r1}{r2}{r3}
+</div></div>
+</body></html>
+"""
+
+
+def test_shared_list_container_does_not_collapse_results():
+    """外层列表容器罩住多条结果时不得坍缩成 1 条(DDG html/SearXNG 布局)
+
+    旧逻辑对每个标题都取"文本最长的候选容器",三条结果全部选中同一个
+    外层列表容器,再从中取第一个链接,去重后 10 条坍缩成 1 条。
+    """
+    snippets = [
+        "A sustained heavy rainfall event hit Beijing with citywide averages "
+        "reaching torrential levels and the observatory breaking a record "
+        "that had stood since October of 1968 in the capital.",
+        "Rainfall continued for sixteen hours across the city with urban "
+        "districts recording the strongest autumn rain in recent memory, "
+        "prompting the subway system to adjust several flooded lines.",
+        "The maximum hourly rain intensity was recorded in mountain areas "
+        "where orographic lift and a low level jet focused the convection "
+        "over the northern districts throughout the entire afternoon.",
+    ]
+    html = (
+        DDG_SHARED_LIST_HTML
+        .replace("{r1}", ddg_result("Beijing rainfall record", "https://a.example.com/1", snippets[0]))
+        .replace("{r2}", ddg_result("Sixteen hours of rain", "https://b.example.com/2", snippets[1]))
+        .replace("{r3}", ddg_result("Rain intensity in mountains", "https://c.example.com/3", snippets[2]))
+    )
+    md = SearchEngineStrategy().extract(html, "https://html.duckduckgo.com/html/?q=rain")
+    assert "[查看原文](https://a.example.com/1)" in md
+    assert "[查看原文](https://b.example.com/2)" in md
+    assert "[查看原文](https://c.example.com/3)" in md
+    assert md.count("[查看原文]") == 3

@@ -383,17 +383,22 @@ class SearchEngineStrategy(ExtractorStrategy):
                 candidates.append({
                     'element': current,
                     'level': level,
-                    'length': text_len
+                    'length': text_len,
+                    # 罩住多条结果的外层列表容器(DuckDuckGo html 版、SearXNG
+                    # 等)含多个标题,会让所有条目选中同一容器并坍缩成一条
+                    'headings': len(current.find_all(['h3', 'h2'])),
                 })
 
             current = current.parent
 
-        # 选择最佳容器：优先选择文本最长的（通常包含最完整的信息）
-        if candidates:
-            best = max(candidates, key=lambda x: x['length'])
-            return best['element']
+        if not candidates:
+            return None
 
-        return None
+        # 优先"单标题"容器(一条结果一个标题);没有时回退旧行为取最长,
+        # 避免对标题结构特殊的布局直接丢条目
+        single = [c for c in candidates if c['headings'] <= 1]
+        best = max(single or candidates, key=lambda x: x['length'])
+        return best['element']
 
     def _extract_cite(self, container, url):
         """
