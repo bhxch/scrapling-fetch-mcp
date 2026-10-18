@@ -27,10 +27,14 @@ class TestBasicRewrite:
         assert rewriter.rewrite(url) == url
 
     def test_duckduckgo_html_version(self):
-        """DuckDuckGo 搜索应该重写为 html 版本"""
+        """DuckDuckGo 搜索应该重写为 html 子域的 html 版本
+
+        裸域(含裸域 /html/ 路径)会命中 DDG 的 anomaly 拦截(202 空页),
+        必须落在 html.duckduckgo.com。
+        """
         rewriter = URLRewriter()
         url = "https://duckduckgo.com/?q=python"
-        expected = "https://duckduckgo.com/html/?q=python"
+        expected = "https://html.duckduckgo.com/html/?q=python"
         assert rewriter.rewrite(url) == expected
 
     def test_duckduckgo_preserve_query_params(self):
@@ -43,9 +47,15 @@ class TestBasicRewrite:
         assert "kl=us-en" in result
 
     def test_duckduckgo_already_html(self):
-        """已经是 html 版本的 DuckDuckGo 不应该重复重写"""
+        """裸域 html 版本应规范化到 html 子域(裸域 /html/ 会被 202 拦截)"""
         rewriter = URLRewriter()
         url = "https://duckduckgo.com/html/?q=python"
+        assert rewriter.rewrite(url) == "https://html.duckduckgo.com/html/?q=python"
+
+    def test_duckduckgo_html_subdomain_not_rewritten(self):
+        """html 子域不再重写(避免链式循环)"""
+        rewriter = URLRewriter()
+        url = "https://html.duckduckgo.com/html/?q=python"
         assert rewriter.rewrite(url) == url
 
     def test_duckduckgo_www_prefix(self):
@@ -53,7 +63,7 @@ class TestBasicRewrite:
         rewriter = URLRewriter()
         url = "https://www.duckduckgo.com/?q=python"
         result = rewriter.rewrite(url)
-        assert "/html/" in result
+        assert "html.duckduckgo.com/html/" in result
         assert "q=python" in result
         assert "www.duckduckgo.com" not in result
 

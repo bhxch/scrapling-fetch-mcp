@@ -11,12 +11,16 @@ BUILTIN_REWRITE_RULES = [
         }
     },
     # DuckDuckGo: search → html version
+    # 必须落在 html. 子域:裸域(html 版含裸域 /html/ 路径)会命中
+    # DDG 的 anomaly 拦截(202 空页)。
+    # 注意:重写器按顺序取第一条 match 命中的规则,DDG 只能有一条规则,
+    # 两种 URL 形态须由同一个 pattern 覆盖
     {
         "match": {"type": "domain", "pattern": "duckduckgo.com"},
         "rewrite": {
             "type": "regex_replace",
-            "pattern": r"^https://(www\.)?duckduckgo\.com/\?(.*)$",
-            "replacement": r"https://duckduckgo.com/html/?\2"
+            "pattern": r"^https://(www\.)?duckduckgo\.com(/html)?/\?(.*)$",
+            "replacement": r"https://html.duckduckgo.com/html/?\3"
         }
     },
     # Reddit: www → old (also handles bare reddit.com)
