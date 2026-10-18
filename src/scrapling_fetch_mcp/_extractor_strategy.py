@@ -599,8 +599,10 @@ class SearchEngineStrategy(ExtractorStrategy):
             # 清理多余空格
             cite_text = ' '.join(cite_text.split())
 
-            # 如果cite包含http，使用它
-            if cite_text.startswith('http'):
+            # 如果cite包含http，使用它；带省略号的cite是Google截断后的
+            # 显示文本，拼不成可访问的URL，不能作为真实链接
+            if (cite_text.startswith('http')
+                    and '...' not in cite_text and '…' not in cite_text):
                 return cite_text
 
         # 2. 从data-url等属性提取

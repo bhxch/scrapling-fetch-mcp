@@ -205,3 +205,13 @@ def test_shared_list_container_does_not_collapse_results():
     assert "[查看原文](https://b.example.com/2)" in md
     assert "[查看原文](https://c.example.com/3)" in md
     assert md.count("[查看原文]") == 3
+
+
+def test_extract_real_url_rejects_truncated_cite():
+    """cite 显示文本被 Google 截断(省略号)时不得当作真实 URL"""
+    strategy = SearchEngineStrategy()
+    soup = BeautifulSoup(
+        '<div><cite>https://www.chinanews.com.cn/10...</cite></div>', 'lxml')
+    fallback = "https://www.google.com/goto?url=x"
+    assert strategy._extract_real_url(soup.find("div"), fallback) == fallback
+
