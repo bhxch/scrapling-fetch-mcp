@@ -35,6 +35,19 @@ scrapling-fetch-mcp \
 
 **Default location:** `~/.config/scrapling/rules.yaml` (optional)
 
+## Markdown Content Negotiation (basic mode)
+
+`basic` 模式的 HTTP 请求携带内容协商头:
+
+```
+Accept: text/markdown, text/html;q=0.9, */*;q=0.8
+```
+
+- 托管在 Cloudflare 且开启了 [Markdown for Agents](https://developers.cloudflare.com/fundamentals/reference/markdown-for-agents/) 的站点(以及其他支持 `text/markdown` 协商的站点)会在边缘直接返回现成 Markdown;此时 `markdown` / `airead` 格式直接使用该内容,跳过本地正文抽取(`airead` 仍做统一后处理)。
+- 不支持协商的站点按标准 HTTP 语义返回 HTML,行为与从前完全一致——探测不产生额外请求。
+- `format=html` 不受影响,始终返回原始 HTML。
+- 该协商仅在 `basic` 模式(curl-cffi)生效;`stealth` / `max-stealth` 为浏览器导航,不发送协商头。
+
 ## Rules Configuration File
 
 ### Basic Structure

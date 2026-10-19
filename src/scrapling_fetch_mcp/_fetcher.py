@@ -196,11 +196,22 @@ async def fetch_page_impl(
     if content_saver:
         html_content = await content_saver.save_content(html_content)
 
+    # 内容协商命中:目标站点(basic 模式)在边缘直接返回了现成 Markdown
+    # (如 Cloudflare "Markdown for Agents"),markdown/airead 直通,跳过本地抽取
+    negotiated_markdown = getattr(page, "markdown_content", None)
+    if not isinstance(negotiated_markdown, str) or not negotiated_markdown:
+        negotiated_markdown = None
+
     # Extract content based on format
     if format == "airead":
-        full_content = _extract_with_airead(html_content, url)
+        if negotiated_markdown:
+            full_content = postprocess_markdown(negotiated_markdown)
+        else:
+            full_content = _extract_with_airead(html_content, url)
     elif is_markdown:
-        full_content = html_to_markdown(html_content)
+        full_content = (
+            negotiated_markdown if negotiated_markdown else html_to_markdown(html_content)
+        )
     else:  # html
         full_content = html_content
 
@@ -254,9 +265,16 @@ async def fetch_pattern_impl(
     await _maybe_report_progress(ctx, 80, 100, "转换中")
 
     is_markdown = format == "markdown"
-    full_content = (
-        html_to_markdown(page.html_content) if is_markdown else page.html_content
-    )
+    # 内容协商命中时(basic 模式边缘直出 Markdown)直接使用,跳过本地转换
+    negotiated_markdown = getattr(page, "markdown_content", None)
+    if not isinstance(negotiated_markdown, str) or not negotiated_markdown:
+        negotiated_markdown = None
+    if is_markdown and negotiated_markdown:
+        full_content = negotiated_markdown
+    elif is_markdown:
+        full_content = html_to_markdown(page.html_content)
+    else:
+        full_content = page.html_content
 
     original_length = len(full_content)
     matched_content, match_count = _search_content(

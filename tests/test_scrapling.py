@@ -94,3 +94,69 @@ async def test_stealth_fetch_uses_configured_timeout(monkeypatch):
         assert captured["timeout"] == 45000
     finally:
         config.set_fetch_timeout(original)
+
+
+class TestMarkdownContentNegotiation:
+    """basic 模式的 Accept: text/markdown 协商探测"""
+
+    def _make_response(self, content_type=None, body=b"# Hello"):
+        # SimpleNamespace 而非 MagicMock:未附加的属性 getattr 必须拿到 None
+        from types import SimpleNamespace
+        resp = SimpleNamespace()
+        resp.body = body
+        headers = {}
+        if content_type is not None:
+            headers["Content-Type"] = content_type
+        resp.headers = headers
+        resp.html_content = "<html><body>wrapped</body></html>"
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_basic_request_sends_markdown_accept_header(self, monkeypatch):
+        """basic 模式请求应带内容协商 Accept 头"""
+        captured = {}
+
+        async def fake_get(url, **kwargs):
+            captured.update(kwargs)
+            return self._make_response()
+
+        monkeypatch.setattr("scrapling.fetchers.AsyncFetcher.get", fake_get)
+        await scrapling_mod._do_browse("http://x", "basic")
+
+        accept = captured["headers"]["Accept"]
+        assert "text/markdown" in accept
+        assert "text/html" in accept  # 未命中时可回退
+
+    @pytest.mark.asyncio
+    async def test_markdown_response_body_attached(self, monkeypatch):
+        """响应为 text/markdown 时,原始 body 应挂到 markdown_content"""
+        async def fake_get(url, **kwargs):
+            return self._make_response(content_type="text/markdown; charset=utf-8",
+                                       body=b"# Real Markdown\n\ntext")
+
+        monkeypatch.setattr("scrapling.fetchers.AsyncFetcher.get", fake_get)
+        resp = await scrapling_mod._do_browse("http://x", "basic")
+
+        assert getattr(resp, "markdown_content", None) == "# Real Markdown\n\ntext"
+
+    @pytest.mark.asyncio
+    async def test_html_response_not_attached(self, monkeypatch):
+        """普通 HTML 响应不应附加 markdown_content"""
+        async def fake_get(url, **kwargs):
+            return self._make_response(content_type="text/html; charset=utf-8")
+
+        monkeypatch.setattr("scrapling.fetchers.AsyncFetcher.get", fake_get)
+        resp = await scrapling_mod._do_browse("http://x", "basic")
+
+        assert getattr(resp, "markdown_content", None) is None
+
+    @pytest.mark.asyncio
+    async def test_missing_content_type_header_tolerated(self, monkeypatch):
+        """响应无 Content-Type 时不应抛错"""
+        async def fake_get(url, **kwargs):
+            return self._make_response()
+
+        monkeypatch.setattr("scrapling.fetchers.AsyncFetcher.get", fake_get)
+        resp = await scrapling_mod._do_browse("http://x", "basic")
+
+        assert getattr(resp, "markdown_content", None) is None

@@ -489,3 +489,76 @@ class TestAireadCascadeFallback:
 
         assert "Fallback Title" in result
         assert "body text" in result
+
+
+class TestNegotiatedMarkdownPassthrough:
+    """内容协商命中(basic 模式边缘直出 Markdown)时的管线直通"""
+
+    def setup_method(self):
+        from scrapling_fetch_mcp._config import config
+        config.cache.clear_all()
+
+    def _fake_page(self):
+        from types import SimpleNamespace
+        page = SimpleNamespace()
+        page.html_content = "<html><body><h1>Wrapped</h1></body></html>"
+        page.markdown_content = "# Edge Markdown\n\nnative body"
+        return page
+
+    @pytest.mark.asyncio
+    async def test_markdown_format_uses_negotiated_content(self, monkeypatch):
+        """format=markdown 时直接返回边缘 Markdown,不再本地转换"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        async def fake_browse(*a, **k):
+            return self._fake_page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl("http://x", "basic", "markdown", 5000, 0)
+
+        assert "# Edge Markdown" in result
+        assert "native body" in result
+        assert "Wrapped" not in result  # 未走本地转换
+
+    @pytest.mark.asyncio
+    async def test_airead_format_postprocesses_negotiated_content(self, monkeypatch):
+        """format=airead 时对边缘 Markdown 做统一后处理"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        async def fake_browse(*a, **k):
+            return self._fake_page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl("http://x", "basic", "airead", 5000, 0)
+
+        assert "# Edge Markdown" in result
+
+    @pytest.mark.asyncio
+    async def test_html_format_still_uses_html(self, monkeypatch):
+        """format=html 不受协商影响,仍返回 HTML"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        async def fake_browse(*a, **k):
+            return self._fake_page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl("http://x", "basic", "html", 5000, 0)
+
+        assert "<html><body><h1>Wrapped</h1></body></html>" in result
+
+    @pytest.mark.asyncio
+    async def test_page_without_markdown_content_uses_local_pipeline(self, monkeypatch):
+        """页面不带 markdown_content(stealth 或未命中)时走原管线"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from types import SimpleNamespace
+
+        page = SimpleNamespace()
+        page.html_content = "<html><body><h1>Local</h1></body></html>"
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl("http://x", "basic", "markdown", 5000, 0)
+
+        assert "Local" in result
