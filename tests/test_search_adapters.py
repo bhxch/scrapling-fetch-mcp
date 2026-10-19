@@ -139,3 +139,78 @@ def test_brave_falls_back_to_generic_channel():
     md = SearchEngineStrategy().extract(GENERIC_BRAVE_HTML, "https://search.brave.com/search?q=rain")
     assert "### 1. Beijing sees record October rain" in md
     assert "[查看原文](https://example.com/beijing-rain)" in md
+
+
+# --- 反爬拦截识别:0 条结果时给模型明确信号,而非静默空结果 ---
+
+GOOGLE_SORRY_HTML = """
+<html><head><title>Sorry, we're unable to complete your request</title></head>
+<body>
+<form id="captcha-form" action="/sorry/index">
+  <div class="g-recaptcha" data-sitekey="xxx"></div>
+  <iframe src="https://www.google.com/recaptcha/api.js"></iframe>
+</form>
+<p>Our systems have detected unusual traffic from your computer network.</p>
+</body></html>
+"""
+
+
+def test_interception_detected_on_google_sorry_page():
+    """Google sorry/验证码页应输出拦截提示而非空结果"""
+    md = SearchEngineStrategy().extract(GOOGLE_SORRY_HTML, "https://www.google.com/search?q=x")
+    assert "反爬拦截" in md
+    assert "recaptcha" in md or "unusual traffic" in md
+    assert "换用其他搜索引擎" in md
+
+
+ANUBIS_HTML = """
+<html><head><title>Making sure you're not a bot!</title></head>
+<body><div id="challenge-error-text">Making sure you're not a bot!
+This may take a couple of seconds.</div></body></html>
+"""
+
+
+def test_interception_detected_on_anubis_page():
+    """Anubis 质询页(SearXNG 公共实例实测样本)应被识别"""
+    md = SearchEngineStrategy().extract(ANUBIS_HTML, "https://baresearch.org/search?q=x")
+    assert "反爬拦截" in md
+    assert "换用其他搜索引擎" in md
+
+
+BRAVE_CHALLENGE_HTML = """
+<html lang="en-us"><head><title>Brave Search</title></head>
+<body><div>Verifying you're not a bot. Quick check before you continue
+searching. Your request has been flagged as being suspicious and Brave
+Search decided to schedule a captcha for you.</div></body></html>
+"""
+
+
+def test_interception_detected_on_brave_challenge():
+    """Brave 429 人机质询页(实测样本)应被识别"""
+    md = SearchEngineStrategy().extract(BRAVE_CHALLENGE_HTML, "https://search.brave.com/search?q=x")
+    assert "反爬拦截" in md
+    assert "换用其他搜索引擎" in md
+
+
+def test_interception_detected_on_too_short_page():
+    """超短空页(如 DDG anomaly 202 空响应)应提示内容异常"""
+    md = SearchEngineStrategy().extract(
+        "<html><head><title>t</title></head><body><p>hi</p></body></html>",
+        "https://duckduckgo.com/html/?q=x")
+    assert "反爬拦截" in md
+
+
+def test_clean_empty_results_not_flagged_as_interception():
+    """无任何拦截信号的正常空结果页不误报"""
+    filler = ("It looks like there aren't many great matches for your search. "
+              * 200)  # 正常 SERP 即使无结果也有完整页面骨架,体量远超 3KB
+    html = f"""
+    <html><head><title>search - Search</title></head><body>
+    <div id="search"><p>No results found for this query. Try different keywords
+    or check your spelling, and browse some related suggestions below.</p>
+    <p>{filler}</p></div>
+    </body></html>
+    """
+    md = SearchEngineStrategy().extract(html, "https://www.google.com/search?q=x")
+    assert "反爬拦截" not in md
+    assert "## Search Results" in md

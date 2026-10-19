@@ -11,6 +11,7 @@
 import base64
 import re
 from abc import ABC, abstractmethod
+from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from bs4 import BeautifulSoup
@@ -71,6 +72,47 @@ def _netloc(page_url: str) -> str:
         return urlparse(page_url).netloc.lower()
     except ValueError:
         return ''
+
+
+# SERP 提取 0 条时的反爬拦截信号。来源:Google sorry/unusual traffic
+# 经典信号,与实测拦截页样本文本(Anubis 质询、Brave 人机检查、
+# Cloudflare/通用浏览器检查)。仅小写子串匹配,且只在结果为空时判定。
+_INTERCEPTION_PATTERNS = [
+    'recaptcha', 'unusual traffic', 'captcha-form', 'g-recaptcha',
+    "verifying you're not a bot", "verifying you’re not a bot",
+    'verifying your browser', 'checking your browser',
+    "making sure you're not a bot", 'making sure you’re not a bot',
+    'just a moment', 'attention required', 'confirm you are human',
+    'verify you are human', 'are you a robot', 'security check',
+]
+
+
+def detect_interception(html: str, soup: BeautifulSoup) -> Optional[str]:
+    """结果为空时判断是否被反爬/验证码拦截,返回可读原因;无信号返回 None。
+
+    正常但无结果的 SERP 不应命中(信号词不会出现在"无结果"提示页),
+    误报影响也有限:0 条前提下提示"换引擎重试"不会误导模型。
+    """
+    if not html:
+        return '返回内容为空'
+
+    low = html.lower()
+    title = soup.title.get_text(strip=True).lower() if soup.title else ''
+
+    signals = []
+    if soup.select_one(
+            '#captcha-form, #challenge-form, iframe[src*="recaptcha"], iframe[src*="captcha"]'):
+        signals.append('验证码表单元素')
+    for pattern in _INTERCEPTION_PATTERNS:
+        if pattern in low:
+            signals.append(pattern)
+    if any(w in title for w in ('sorry', 'captcha', 'verify', 'checking')):
+        signals.append(f'title="{title[:40]}"')
+    if signals:
+        return '、'.join(dict.fromkeys(signals[:4]))
+    if len(html) < 3000:
+        return '返回内容过短'
+    return None
 
 
 def _host_matches(page_url: str, domain: str) -> bool:
@@ -667,11 +709,35 @@ class SearchEngineStrategy:
             parts.append("\n\n")
 
         parts.append("## Search Results\n\n")
-        seen_urls = set()
-        index = 0
-        for result in adapter.collect_results(soup, url):
+        results = self._filter_results(adapter.collect_results(soup, url))
+
+        if not results:
+            # 0 条时区分"查询无果"与"被反爬拦截":给模型明确信号,
+            # 引导其换引擎重试而非当作无结果放弃
+            reason = detect_interception(html, soup)
+            if reason:
+                parts.append(
+                    f"未获取到搜索结果:疑似被反爬拦截(信号: {reason})。\n\n"
+                    "本引擎本次不可用,建议换用其他搜索引擎或稍后重试。\n\n"
+                )
+            return ''.join(parts)
+
+        for index, result in enumerate(results, 1):
             title = result['title']
-            if is_noise_title(title):
+            parts.append(f"### {index}. {title}\n\n")
+            if result.get('snippet'):
+                parts.append(f"{result['snippet']}\n\n")
+            parts.append(f"[查看原文]({result['url']})\n\n")
+            parts.append("---\n\n")
+
+        return ''.join(parts)
+
+    @staticmethod
+    def _filter_results(raw_results: list) -> list:
+        """统一过滤(噪音标题/gstatic/引擎自身页)与 URL 去重"""
+        seen_urls, out = set(), []
+        for result in raw_results:
+            if is_noise_title(result['title']):
                 continue
             result_url = result['url']
             if 'gstatic.com' in result_url or is_internal_search_page(result_url):
@@ -679,12 +745,5 @@ class SearchEngineStrategy:
             if result_url in seen_urls:
                 continue
             seen_urls.add(result_url)
-
-            index += 1
-            parts.append(f"### {index}. {title}\n\n")
-            if result.get('snippet'):
-                parts.append(f"{result['snippet']}\n\n")
-            parts.append(f"[查看原文]({result_url})\n\n")
-            parts.append("---\n\n")
-
-        return ''.join(parts)
+            out.append(result)
+        return out
