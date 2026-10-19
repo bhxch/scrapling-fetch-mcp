@@ -9,7 +9,9 @@ from re import error as re_error
 from traceback import format_exc
 from typing import Optional
 
+from bs4 import BeautifulSoup
 from mcp.server.mcpserver.context import Context
+from yaml import safe_load as _yaml_safe_load
 
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
@@ -21,6 +23,81 @@ from scrapling_fetch_mcp._strategy_factory import StrategyFactory
 from scrapling_fetch_mcp._markdown_postprocessor import postprocess_markdown
 
 logger = logging.getLogger("scrapling_fetch_mcp")
+
+
+# HTML head 里的元数据来源:og/twitter 协议标签与常规 meta,按优先级排列
+_META_SOURCES = {
+    "title": [
+        ("meta", {"property": "og:title"}),
+        ("meta", {"name": "twitter:title"}),
+        ("title", {}),
+    ],
+    "description": [
+        ("meta", {"property": "og:description"}),
+        ("meta", {"name": "description"}),
+        ("meta", {"name": "twitter:description"}),
+    ],
+    "author": [
+        ("meta", {"name": "author"}),
+        ("meta", {"property": "article:author"}),
+    ],
+    "date": [
+        ("meta", {"property": "article:published_time"}),
+        ("meta", {"name": "date"}),
+        ("meta", {"itemprop": "datePublished"}),
+    ],
+}
+
+
+def _parse_frontmatter(text: str) -> dict:
+    """解析 Markdown 开头的 YAML frontmatter(边缘直出内容自带)。"""
+    if not text.startswith("---"):
+        return {}
+    try:
+        block = text.split("\n---", 1)[0][3:]
+        data = _yaml_safe_load(block)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _extract_page_metadata(
+    html: str, negotiated_markdown: Optional[str] = None
+) -> dict:
+    """从页面提取 title/author/date/description,拿不到的键不出现。
+
+    内容协商命中时页面是边缘 Markdown,优先读它的 frontmatter;
+    HTML 场景读 og/twitter 协议标签与常规 meta,取第一个非空来源。
+    """
+    metadata: dict[str, str] = {}
+
+    if negotiated_markdown:
+        front = _parse_frontmatter(negotiated_markdown)
+        for key in ("title", "description", "author", "date"):
+            value = front.get(key)
+            if isinstance(value, str) and value.strip():
+                metadata[key] = value.strip()
+        if len(metadata) == 4:
+            return metadata
+
+    try:
+        soup = BeautifulSoup(html, "lxml")
+        for key, selectors in _META_SOURCES.items():
+            if key in metadata:
+                continue
+            for tag_name, attrs in selectors:
+                elem = soup.find(tag_name, attrs) if attrs else soup.find(tag_name)
+                value = elem.get("content") if attrs and elem else (
+                    elem.get_text(strip=True) if elem else None
+                )
+                if value and value.strip():
+                    metadata[key] = value.strip()
+                    break
+    except Exception:
+        # 元数据是增益信息,解析失败不影响正文返回
+        logger.debug("page metadata extraction failed", exc_info=True)
+
+    return metadata
 
 
 def _search_content(
@@ -99,6 +176,7 @@ def _create_metadata(
     is_truncated: bool,
     start_index: Optional[int] = None,
     match_count: Optional[int] = None,
+    page_metadata: Optional[dict] = None,
 ) -> str:
     metadata = {
         "total_length": total_length,
@@ -112,6 +190,8 @@ def _create_metadata(
         metadata["start_index"] = start_index
     if match_count is not None:
         metadata["match_count"] = match_count
+    if page_metadata:
+        metadata.update(page_metadata)
     return dumps(metadata)
 
 
@@ -220,7 +300,8 @@ async def fetch_page_impl(
     is_truncated = total_length > (start_index + max_length)
 
     metadata_json = _create_metadata(
-        total_length, len(truncated_content), is_truncated, start_index
+        total_length, len(truncated_content), is_truncated, start_index,
+        page_metadata=_extract_page_metadata(html_content, negotiated_markdown),
     )
     await _maybe_report_progress(ctx, 100, 100, "完成")
     return f"METADATA: {metadata_json}\n\n{truncated_content}"
@@ -290,7 +371,8 @@ async def fetch_pattern_impl(
     is_truncated = len(matched_content) > max_length
 
     metadata_json = _create_metadata(
-        original_length, len(truncated_content), is_truncated, None, match_count
+        original_length, len(truncated_content), is_truncated, None, match_count,
+        page_metadata=_extract_page_metadata(page.html_content, negotiated_markdown),
     )
     await _maybe_report_progress(ctx, 100, 100, "完成")
     return f"METADATA: {metadata_json}\n\n{truncated_content}"

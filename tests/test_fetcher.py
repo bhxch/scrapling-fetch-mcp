@@ -562,3 +562,66 @@ class TestNegotiatedMarkdownPassthrough:
         result = await fetch_page_impl("http://x", "basic", "markdown", 5000, 0)
 
         assert "Local" in result
+
+
+class TestPageMetadata:
+    """METADATA 携带 title/author/date/description 页面元数据"""
+
+    def test_extract_from_og_tags(self):
+        from scrapling_fetch_mcp._fetcher import _extract_page_metadata
+        html = """<html><head>
+            <meta property="og:title" content="OG Title">
+            <meta property="og:description" content="Page summary">
+            <meta name="author" content="Alice">
+            <meta property="article:published_time" content="2026-01-15">
+        </head><body><p>x</p></body></html>"""
+        md = _extract_page_metadata(html)
+        assert md == {
+            "title": "OG Title",
+            "description": "Page summary",
+            "author": "Alice",
+            "date": "2026-01-15",
+        }
+
+    def test_title_falls_back_to_title_tag(self):
+        from scrapling_fetch_mcp._fetcher import _extract_page_metadata
+        html = "<html><head><title>Plain Title</title></head><body></body></html>"
+        md = _extract_page_metadata(html)
+        assert md["title"] == "Plain Title"
+        assert "author" not in md  # 拿不到的键不出现
+
+    def test_negotiated_markdown_uses_frontmatter(self):
+        from scrapling_fetch_mcp._fetcher import _extract_page_metadata
+        md_text = "---\ntitle: Edge Post\ndescription: From frontmatter\n---\n\n# Edge Post\n"
+        md = _extract_page_metadata("<html><body>wrapped</body></html>", md_text)
+        assert md["title"] == "Edge Post"
+        assert md["description"] == "From frontmatter"
+
+    def test_broken_html_tolerated(self):
+        from scrapling_fetch_mcp._fetcher import _extract_page_metadata
+        assert _extract_page_metadata("") == {}
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_metadata_in_output(self, monkeypatch):
+        """fetch_page 返回的 METADATA JSON 应包含页面元数据"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+        import json as _json
+
+        config.cache.clear_all()
+        page = SimpleNamespace()
+        page.html_content = (
+            "<html><head><title>Meta Page</title></head>"
+            "<body><h1>Body</h1></body></html>"
+        )
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl("http://meta-x", "basic", "markdown", 5000, 0)
+
+        meta_line = result.split("\n\n", 1)[0]
+        metadata = _json.loads(meta_line.removeprefix("METADATA: "))
+        assert metadata["title"] == "Meta Page"
