@@ -482,10 +482,17 @@ class TestAireadCascadeFallback:
             classmethod(lambda cls, name, config_path=None: EmptyStrategy()),
         )
 
-        result = fetcher_mod._extract_with_airead(
-            "<html><body><h1>Fallback Title</h1><p>body text</p></body></html>",
-            "https://example.com/page",
-        )
+        # 关闭仲裁:本测试只验证"空 → 全文兜底"这一段(Jina 仲裁单独测)
+        from scrapling_fetch_mcp._config import config
+        original_disabled = config.jina_arbiter_disabled
+        config.set_jina_arbiter_disabled(True)
+        try:
+            result = await fetcher_mod._extract_with_airead(
+                "<html><body><h1>Fallback Title</h1><p>body text</p></body></html>",
+                "https://example.com/page",
+            )
+        finally:
+            config.set_jina_arbiter_disabled(original_disabled)
 
         assert "Fallback Title" in result
         assert "body text" in result
@@ -769,3 +776,172 @@ class TestRefreshBypassCache:
 
         await fetch_pattern_impl("http://refresh-p", "target", "basic", "markdown", 5000, 50, refresh=True)
         assert len(calls) == 2
+
+
+class TestJinaArbitration:
+    """Jina 按需仲裁:本地结果可疑(空/过短)才外发,比有效字数取优"""
+
+    def _stub_strategies(self, monkeypatch, local_result, jina_result):
+        """同时 mock 掉策略路由与 Jina 仲裁者,记录 Jina 是否被调用"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._extractor_strategy import ExtractorStrategy
+
+        class StubLocal(ExtractorStrategy):
+            def extract(self, html, url):
+                return local_result
+
+        class StubJina(ExtractorStrategy):
+            remote = True
+            calls = 0
+
+            def extract(self, html, url):
+                StubJina.calls += 1
+                return jina_result
+
+        StubJina.calls = 0
+
+        def fake_get_strategy(cls, name, config_path=None):
+            return StubJina() if name == "jina" else StubLocal()
+
+        monkeypatch.setattr(fetcher_mod.StrategyFactory, "get_strategy", classmethod(fake_get_strategy))
+        monkeypatch.setattr(fetcher_mod.URLMatcher, "match", lambda self, url: "stub")
+        return StubJina
+
+    SHORT_LOCAL = "short"  # 5 个有效字符,低于默认阈值 500
+    LONG_JINA = "# Jina Body\n\n" + ("rich content " * 60)
+
+    @pytest.mark.asyncio
+    async def test_short_local_triggers_jina_and_loses(self, monkeypatch):
+        """本地过短触发仲裁,Jina 结果更充实则采用"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+
+        stub = self._stub_strategies(monkeypatch, self.SHORT_LOCAL, self.LONG_JINA)
+        page = SimpleNamespace(html_content="<html></html>")
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetcher_mod._extract_with_airead("<html></html>", "http://arb-x")
+
+        assert stub.calls == 1
+        assert "Jina Body" in result
+
+    @pytest.mark.asyncio
+    async def test_long_local_skips_arbitration(self, monkeypatch):
+        """本地结果充实(高于阈值)时不外发,零额外延迟"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+
+        long_local = "# Local\n\n" + ("plenty of text " * 60)
+        stub = self._stub_strategies(monkeypatch, long_local, self.LONG_JINA)
+        page = SimpleNamespace(html_content="<html></html>")
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetcher_mod._extract_with_airead("<html></html>", "http://arb-y")
+
+        assert stub.calls == 0
+        assert "Local" in result
+
+    @pytest.mark.asyncio
+    async def test_jina_failure_keeps_local(self, monkeypatch):
+        """Jina 失败(空串)时保留本地结果,行为与无仲裁时一致"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from types import SimpleNamespace
+
+        self._stub_strategies(monkeypatch, self.SHORT_LOCAL, "")
+        page = SimpleNamespace(html_content="<html></html>")
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetcher_mod._extract_with_airead("<html></html>", "http://arb-z")
+
+        assert "short" in result
+
+    @pytest.mark.asyncio
+    async def test_both_empty_falls_back_to_full_page(self, monkeypatch):
+        """本地空 + Jina 空时,保留全文 Markdown 兜底"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from types import SimpleNamespace
+
+        self._stub_strategies(monkeypatch, "", "")
+        html = "<html><body><h1>Full Page Fallback</h1></body></html>"
+        page = SimpleNamespace(html_content=html)
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetcher_mod._extract_with_airead(html, "http://arb-w")
+
+        assert "Full Page Fallback" in result
+
+    @pytest.mark.asyncio
+    async def test_disabled_arbiter_never_called(self, monkeypatch):
+        """SCRAPLING_DISABLE_JINA_ARBITER 关闭后完全不外发"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+
+        stub = self._stub_strategies(monkeypatch, self.SHORT_LOCAL, self.LONG_JINA)
+        page = SimpleNamespace(html_content="<html></html>")
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        original = config.jina_arbiter_disabled
+        config.set_jina_arbiter_disabled(True)
+        try:
+            result = await fetcher_mod._extract_with_airead("<html></html>", "http://arb-d")
+        finally:
+            config.set_jina_arbiter_disabled(original)
+
+        assert stub.calls == 0
+        assert "short" in result
+
+
+class TestRemoteStrategySkipsBrowse:
+    """站点规则显式指定远程策略(如 jina)时,跳过本地抓取直接外发"""
+
+    @pytest.mark.asyncio
+    async def test_remote_strategy_bypasses_browse_url(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from scrapling_fetch_mcp._extractor_strategy import ExtractorStrategy
+
+        class StubRemote(ExtractorStrategy):
+            remote = True
+
+            def extract(self, html, url):
+                assert html is None  # 远程策略没有本地 HTML
+                return "# Remote Content\n\ndelivered by jina"
+
+        browse_called = []
+
+        async def fake_browse(*a, **k):
+            browse_called.append(1)
+            from types import SimpleNamespace
+            p = SimpleNamespace(html_content="<html></html>")
+            return p
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        monkeypatch.setattr(fetcher_mod.URLMatcher, "match", lambda self, url: "jina")
+        monkeypatch.setattr(
+            fetcher_mod.StrategyFactory, "get_strategy",
+            classmethod(lambda cls, name, config_path=None: StubRemote()),
+        )
+        config.cache.clear_all()
+
+        result = await fetch_page_impl("http://remote-x", "basic", "airead", 5000, 0)
+
+        assert browse_called == []  # 本地抓取被跳过
+        assert "Remote Content" in result

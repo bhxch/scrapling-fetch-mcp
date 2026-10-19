@@ -171,3 +171,39 @@ class TestTransportConfig:
         assert config.auth_token == "TOK"
         assert config.max_concurrent == 8
         assert config.acquire_timeout == 12.5
+
+
+class TestJinaArbitrationConfig:
+    """Jina 仲裁三项配置的 env 解析"""
+
+    def setup_method(self):
+        from scrapling_fetch_mcp._config import Config
+        self._instance = Config()
+        self._instance._jina_api_key = ""
+        self._instance._jina_arbiter_disabled = False
+        self._instance._jina_min_chars = 500
+
+    def test_api_key_from_env(self, monkeypatch):
+        monkeypatch.setenv("JINA_API_KEY", "jina_key_abc")
+        init_config_from_env()
+        assert config.jina_api_key == "jina_key_abc"
+
+    def test_arbiter_disabled_from_env(self, monkeypatch):
+        monkeypatch.setenv("SCRAPLING_DISABLE_JINA_ARBITER", "1")
+        init_config_from_env()
+        assert config.jina_arbiter_disabled is True
+
+    def test_arbiter_enabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("SCRAPLING_DISABLE_JINA_ARBITER", raising=False)
+        init_config_from_env()
+        assert config.jina_arbiter_disabled is False
+
+    def test_min_chars_from_env(self, monkeypatch):
+        monkeypatch.setenv("SCRAPLING_JINA_MIN_CHARS", "200")
+        init_config_from_env()
+        assert config.jina_min_chars == 200
+
+    def test_min_chars_invalid_env_ignored(self, monkeypatch):
+        monkeypatch.setenv("SCRAPLING_JINA_MIN_CHARS", "not-a-number")
+        init_config_from_env()
+        assert config.jina_min_chars == 500

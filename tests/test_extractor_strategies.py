@@ -251,3 +251,88 @@ def test_dual_extractor_tolerates_extractor_failure(monkeypatch):
     assert isinstance(result, str)
     assert len(result) > 0
     assert "Surviving extractor output" in result
+
+
+# JinaReaderStrategy Tests
+from scrapling_fetch_mcp._extractor_strategy import JinaReaderStrategy
+
+JINA_RESPONSE = (
+    "Title: Example Page\n"
+    "URL Source: https://example.com/page\n"
+    "Markdown Content:\n"
+    "# Real Body\n\nparagraph text"
+)
+
+
+class _FakeCurlResponse:
+    def __init__(self, status_code=200, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+def test_jina_strategy_parses_markdown_body(monkeypatch):
+    """成功响应取 Markdown Content 之后的正文,丢弃元数据头"""
+    captured = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured.update(url=url, headers=headers or {}, timeout=timeout)
+        return _FakeCurlResponse(200, JINA_RESPONSE)
+
+    monkeypatch.setattr("curl_cffi.requests.get", fake_get)
+    result = JinaReaderStrategy().extract("<html>unused</html>", "https://example.com/page")
+
+    assert result == "# Real Body\n\nparagraph text"
+    assert captured["url"] == "https://r.jina.ai/https://example.com/page"  # URL 即输入,HTML 被忽略
+    assert captured["timeout"] == JinaReaderStrategy.READER_TIMEOUT
+
+def test_jina_strategy_sends_bearer_key(monkeypatch):
+    """配置了 JINA_API_KEY 时携带 Bearer 头"""
+    from scrapling_fetch_mcp._config import config
+
+    captured = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured.update(headers=headers or {})
+        return _FakeCurlResponse(200, JINA_RESPONSE)
+
+    monkeypatch.setattr("curl_cffi.requests.get", fake_get)
+    original = config.jina_api_key
+    try:
+        config.set_jina_api_key("test-key-123")
+        JinaReaderStrategy().extract("", "https://example.com")
+    finally:
+        config.set_jina_api_key(original)
+
+    assert captured["headers"]["Authorization"] == "Bearer test-key-123"
+
+def test_jina_strategy_rate_limited_returns_empty(monkeypatch):
+    """429 等非 200 响应返回空串(仲裁场景自然落选,独立策略场景降级)"""
+    monkeypatch.setattr(
+        "curl_cffi.requests.get",
+        lambda url, headers=None, timeout=None: _FakeCurlResponse(429, "rate limited"),
+    )
+    assert JinaReaderStrategy().extract("", "https://example.com") == ""
+
+def test_jina_strategy_network_error_returns_empty(monkeypatch):
+    """网络异常不外抛,返回空串"""
+    def boom(url, headers=None, timeout=None):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("curl_cffi.requests.get", boom)
+    assert JinaReaderStrategy().extract("", "https://example.com") == ""
+
+def test_jina_strategy_missing_marker_returns_whole_body(monkeypatch):
+    """格式漂移(找不到分隔标记)时退回整个响应体,不静默丢正文"""
+    monkeypatch.setattr(
+        "curl_cffi.requests.get",
+        lambda url, headers=None, timeout=None: _FakeCurlResponse(200, "# Just markdown"),
+    )
+    assert JinaReaderStrategy().extract("", "https://example.com") == "# Just markdown"
+
+def test_jina_strategy_is_remote():
+    """remote 标志:管线据此跳过本地抓取"""
+    assert getattr(JinaReaderStrategy(), "remote") is True
+
+def test_factory_registers_jina():
+    from scrapling_fetch_mcp._strategy_factory import StrategyFactory
+    assert "jina" in StrategyFactory.list_strategies()

@@ -48,6 +48,25 @@ Accept: text/markdown, text/html;q=0.9, */*;q=0.8
 - `format=html` 不受影响,始终返回原始 HTML。
 - 该协商仅在 `basic` 模式(curl-cffi)生效;`stealth` / `max-stealth` 为浏览器导航,不发送协商头。
 
+## Jina On-Demand Arbitration
+
+airead 格式默认启用 Jina 按需仲裁:本地抽取结果可疑(输出为空,或有效字符数低于阈值)时,才把 URL 发给 `r.jina.ai` 获取其抽取结果,与本地结果比有效字数取优。正常页面零外发、零额外延迟;Jina 任何失败(限流/超时/网络)都静默退回本地结果,行为与无仲裁时一致。
+
+环境变量:
+
+```
+# 可选。配置后走 500 RPM 付费档,不配置走免费 20 RPM(仲裁触发频率低,免费档够用)
+JINA_API_KEY=
+
+# 置 1 关闭仲裁(完全不外发)
+SCRAPLING_DISABLE_JINA_ARBITER=
+
+# 仲裁触发阈值(有效字符数),默认 500
+SCRAPLING_JINA_MIN_CHARS=
+```
+
+`jina` 也注册为独立抽取策略,可在站点规则中显式指定 `strategy: jina`——该策略为纯远程通道(URL 即输入,不经本地浏览器抓取,也不参与本地全文兜底),适合明知本地抓取/抽取不划算的站点。
+
 ## Rules Configuration File
 
 ### Basic Structure

@@ -14,6 +14,7 @@ from scrapling_fetch_mcp._extractor_strategy import (
     ScraplingStrategy,
     DeveloperPlatformStrategy,
     DocumentationStrategy,
+    JinaReaderStrategy,
 )
 
 
@@ -34,6 +35,7 @@ class StrategyFactory:
             'search_engine': SearchEngineStrategy,
             'developer_platform': DeveloperPlatformStrategy,
             'documentation': DocumentationStrategy,
+            'jina': JinaReaderStrategy,
         }
 
     @classmethod

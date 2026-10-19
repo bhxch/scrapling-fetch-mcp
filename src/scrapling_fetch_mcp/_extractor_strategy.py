@@ -7,6 +7,7 @@ import trafilatura
 from readability import Document
 from scrapling import Selector
 
+from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._html_converter import html_to_markdown
 
 logger = logging.getLogger("scrapling_fetch_mcp")
@@ -141,3 +142,46 @@ class DualExtractorStrategy(ExtractorStrategy):
 
         # 返回字数最多的结果
         return max(results, key=lambda x: x[0])[1]
+
+
+class JinaReaderStrategy(ExtractorStrategy):
+    """Jina Reader 远程抽取策略。
+
+    忽略传入的本地 HTML,直接把 URL 交给 r.jina.ai 获取现成 Markdown
+    (由 Jina 服务端完成渲染与正文抽取)。两条用途:
+    - 站点规则显式指定 strategy: jina,作为纯远程通道
+    - 作为 Jina 按需仲裁的仲裁者(本地结果可疑时才外发,见 _fetcher)
+    """
+
+    remote = True
+    READER_TIMEOUT = 20  # 仲裁是附加延迟,不吃满 fetch_timeout
+    CONTENT_MARKER = "Markdown Content:"  # r.jina.ai 默认文本格式的正文分隔
+
+    def extract(self, html: str, url: str) -> str:
+        # 局部导入:让不需要 Jina 的部署不被 curl_cffi 初始化路径牵连
+        from curl_cffi import requests as curl_requests
+
+        headers = {}
+        api_key = config.jina_api_key
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        try:
+            resp = curl_requests.get(
+                f"https://r.jina.ai/{url}",
+                headers=headers,
+                timeout=self.READER_TIMEOUT,
+            )
+        except Exception:
+            logger.warning("jina reader 请求失败: %s", url, exc_info=True)
+            return ""
+
+        if resp.status_code != 200:
+            logger.warning("jina reader 返回 %s: %s", resp.status_code, url)
+            return ""
+
+        text = resp.text or ""
+        idx = text.find(self.CONTENT_MARKER)
+        # 找不到分隔标记时退回整个响应体:格式漂移好过静默丢失正文
+        body = text[idx + len(self.CONTENT_MARKER):] if idx >= 0 else text
+        return body.strip()

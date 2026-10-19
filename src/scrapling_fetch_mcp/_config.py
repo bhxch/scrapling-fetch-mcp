@@ -82,6 +82,9 @@ class Config:
     _url_rewrite_config_path: Optional[Path] = None
     _url_rewriter: Optional['URLRewriter'] = None
     _disable_url_rewrite: bool = False
+    _jina_api_key: str = ""
+    _jina_arbiter_disabled: bool = False
+    _jina_min_chars: int = 500
     _enabled_features: set[str] = set()
     _disable_features_raw: list[str] = []
     _enable_features_raw: list[str] = []
@@ -216,6 +219,35 @@ class Config:
     def set_disable_url_rewrite(self, disable: bool) -> None:
         """Set whether to disable URL rewrite"""
         self._disable_url_rewrite = disable
+
+    @property
+    def jina_api_key(self) -> str:
+        """Optional Jina API key (free tier works without one at 20 RPM)"""
+        return self._jina_api_key
+
+    def set_jina_api_key(self, key: str) -> None:
+        """Set the Jina Reader API key"""
+        self._jina_api_key = key or ""
+
+    @property
+    def jina_arbiter_disabled(self) -> bool:
+        """Whether the Jina on-demand arbitration is disabled"""
+        return self._jina_arbiter_disabled
+
+    def set_jina_arbiter_disabled(self, disabled: bool) -> None:
+        """Set whether to disable the Jina on-demand arbitration"""
+        self._jina_arbiter_disabled = disabled
+
+    @property
+    def jina_min_chars(self) -> int:
+        """Effective-character threshold below which Jina arbitration kicks in"""
+        return self._jina_min_chars
+
+    def set_jina_min_chars(self, value: int) -> None:
+        """Set the arbitration trigger threshold"""
+        if value < 0:
+            raise ValueError("jina_min_chars must be non-negative")
+        self._jina_min_chars = value
 
     @property
     def transport(self) -> str:
@@ -383,6 +415,18 @@ def init_config_from_env() -> None:
     env_disable_url_rewrite = getenv("SCRAPLING_DISABLE_URL_REWRITE", "").lower()
     if env_disable_url_rewrite in ('true', '1', 'yes'):
         config.set_disable_url_rewrite(True)
+
+    # Jina on-demand arbitration config
+    config.set_jina_api_key(getenv("JINA_API_KEY", ""))
+    env_jina_arbiter_disabled = getenv("SCRAPLING_DISABLE_JINA_ARBITER", "").lower()
+    if env_jina_arbiter_disabled in ('true', '1', 'yes'):
+        config.set_jina_arbiter_disabled(True)
+    env_jina_min_chars = getenv("SCRAPLING_JINA_MIN_CHARS", "")
+    if env_jina_min_chars:
+        try:
+            config.set_jina_min_chars(int(env_jina_min_chars))
+        except ValueError:
+            pass  # Invalid value, use default
 
     # Note: only store raw values, do NOT call resolve_features() here
     env_disable_features = getenv("SCRAPLING_DISABLE_FEATURES", "")

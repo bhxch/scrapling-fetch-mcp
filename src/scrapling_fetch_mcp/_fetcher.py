@@ -7,6 +7,7 @@ from pathlib import Path
 from re import compile
 from re import error as re_error
 from traceback import format_exc
+from types import SimpleNamespace
 from typing import Optional
 
 from bs4 import BeautifulSoup
@@ -15,6 +16,10 @@ from yaml import safe_load as _yaml_safe_load
 
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
+from scrapling_fetch_mcp._extractor_strategy import (
+    count_effective_characters,
+    ExtractorStrategy,
+)
 from scrapling_fetch_mcp._html_converter import html_to_markdown
 from scrapling_fetch_mcp._scrapling import browse_url
 from scrapling_fetch_mcp._content_saver import ContentSaver
@@ -135,29 +140,63 @@ def _search_content(
         return f"ERROR: Invalid regex pattern: {str(e)}", 0
 
 
-def _extract_with_airead(html: str, url: str) -> str:
+def _should_arbitrate(markdown: str) -> bool:
+    """本地抽取结果可疑(空或有效字数低于阈值)时才值得外发 Jina 仲裁。"""
+    if config.jina_arbiter_disabled:
+        return False
+    if not markdown or not markdown.strip():
+        return True
+    return count_effective_characters(markdown) < config.jina_min_chars
+
+
+async def _arbitrate_with_jina(url: str) -> str:
+    """把 URL 交给 Jina Reader 仲裁;任何失败返回空串退回本地结果。"""
+    try:
+        strategy = StrategyFactory.get_strategy("jina")
+        return await asyncio.to_thread(strategy.extract, None, url)
+    except Exception:
+        logger.warning("jina 仲裁调用异常,使用本地结果 (%s)", url, exc_info=True)
+        return ""
+
+
+async def _extract_with_airead(
+    html: str, url: str, strategy: Optional[ExtractorStrategy] = None,
+    strategy_name: Optional[str] = None,
+) -> str:
     """
     Extract content using airead format
 
     Args:
         html: Raw HTML content
         url: Page URL (for strategy routing)
+        strategy: Pre-matched strategy (fetch_page_impl matches early to
+                  support remote strategies; when None, match here)
+        strategy_name: Name of the pre-matched strategy
 
     Returns:
         Extracted and postprocessed Markdown content
     """
-    # 1. Get configuration file path
-    rules_config_path = config.rules_config_path
+    # 1-3. Strategy routing (skipped when the caller already matched)
+    if strategy is None:
+        rules_config_path = config.rules_config_path
+        strategy_name = URLMatcher(rules_config_path).match(url)
+        strategy = StrategyFactory.get_strategy(strategy_name, rules_config_path)
 
-    # 2. URL matching
-    matcher = URLMatcher(rules_config_path)
-    strategy_name = matcher.match(url)
-
-    # 3. Get strategy instance
-    strategy = StrategyFactory.get_strategy(strategy_name, rules_config_path)
+    # 远程策略(如站点规则显式指定 jina):无本地 HTML,URL 即输入
+    if getattr(strategy, "remote", False):
+        markdown = await asyncio.to_thread(strategy.extract, None, url)
+        return postprocess_markdown(markdown)
 
     # 4. Execute extraction
     markdown = strategy.extract(html, url)
+
+    # Jina 按需仲裁:本地结果可疑(空/过短)才把 URL 外发给 Jina 对比,
+    # 比有效字数取优;正常页面零外发、零额外延迟
+    if _should_arbitrate(markdown):
+        jina_markdown = await _arbitrate_with_jina(url)
+        if count_effective_characters(jina_markdown) > count_effective_characters(markdown):
+            logger.info("airead: Jina 仲裁结果胜出 (%s)", url)
+            markdown = jina_markdown
 
     # 级联兜底:策略抽不出正文(trafilatura 返回 None 等)时,
     # 退回全页 Markdown 转换,保证有内容返回而非空结果
@@ -245,17 +284,38 @@ async def fetch_page_impl(
 
     effective_mode = config.get_effective_mode(mode)
 
+    # airead 需要提前做策略路由:远程策略(URL 即输入)可跳过本地抓取
+    airead_strategy = None
+    airead_strategy_name = None
+    if format == "airead":
+        rules_config_path = config.rules_config_path
+        airead_strategy_name = URLMatcher(rules_config_path).match(url)
+        airead_strategy = StrategyFactory.get_strategy(
+            airead_strategy_name, rules_config_path
+        )
+    remote_airead = getattr(airead_strategy, "remote", False)
+
     # Setup content saver if needed
     content_saver = None
     page_action = None
     if save_content and scraping_dir:
-        content_saver = ContentSaver(scraping_dir, url, format)
-        page_action = content_saver.create_page_action()
+        if remote_airead:
+            logger.warning("远程策略无本地页面可保存,忽略 save_content (%s)", url)
+        else:
+            content_saver = ContentSaver(scraping_dir, url, format)
+            page_action = content_saver.create_page_action()
 
     # Check cache first; refresh=True 跳过缓存强制重抓(调试站点规则/内容刚更新)
     cached_page = None if refresh else config.cache.get(url, effective_mode)
     if cached_page is not None:
         page = cached_page
+    elif remote_airead:
+        # 远程策略:URL 直接交给策略(不经本地浏览器),结果包成页面对象
+        # 进缓存,复用下方协商直通管线(不仲裁、无本地全文兜底)
+        await _maybe_report_progress(ctx, 0, 100, "远程抽取中")
+        remote_markdown = await asyncio.to_thread(airead_strategy.extract, None, url)
+        page = SimpleNamespace(html_content="", markdown_content=remote_markdown)
+        config.cache.set(url, effective_mode, page)
     else:
         # About to perform the slow network/browse step — emit a heartbeat
         # so transports (e.g. streamable-http SSE) know we are alive.
@@ -293,7 +353,10 @@ async def fetch_page_impl(
         if negotiated_markdown:
             full_content = postprocess_markdown(negotiated_markdown)
         else:
-            full_content = _extract_with_airead(html_content, url)
+            full_content = await _extract_with_airead(
+                html_content, url,
+                strategy=airead_strategy, strategy_name=airead_strategy_name,
+            )
     elif is_markdown:
         full_content = (
             negotiated_markdown if negotiated_markdown else html_to_markdown(html_content)
