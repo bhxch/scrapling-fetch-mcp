@@ -108,6 +108,27 @@ def test_readability_strategy_basic():
     assert isinstance(result, str)
     assert len(result) > 0
 
+def test_readability_strategy_outputs_markdown():
+    """Readability 抽出的正文应经统一转换器输出 Markdown 而非纯文本"""
+    html = """
+    <html>
+        <body>
+            <article>
+                <h1>Article Title</h1>
+                <p>First paragraph with content.</p>
+                <h2>Section</h2>
+                <p>More text here.</p>
+                <pre><code>print(1)</code></pre>
+            </article>
+        </body>
+    </html>
+    """
+    result = ReadabilityStrategy().extract(html, "https://example.com")
+
+    assert "# Article Title" in result
+    assert "## Section" in result
+    assert "```" in result  # 代码块围栏保留
+
 
 # ScraplingStrategy Tests
 from scrapling_fetch_mcp._extractor_strategy import ScraplingStrategy
@@ -207,3 +228,26 @@ def test_dual_extractor_fallback():
 
     # 应该返回某个提取器的结果(即使是空字符串)
     assert isinstance(result, str)
+
+def test_dual_extractor_tolerates_extractor_failure(monkeypatch):
+    """单路提取器抛异常时 dual 应跳过该路,而不是整体失败"""
+    from scrapling_fetch_mcp._extractor_strategy import ReadabilityStrategy
+
+    def boom(self, html, url):
+        raise RuntimeError("extractor crashed")
+
+    monkeypatch.setattr(ReadabilityStrategy, "extract", boom)
+
+    html = """
+    <html>
+        <body>
+            <h1>Still Works</h1>
+            <p>Surviving extractor output</p>
+        </body>
+    </html>
+    """
+    result = DualExtractorStrategy().extract(html, "https://example.com")
+
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert "Surviving extractor output" in result

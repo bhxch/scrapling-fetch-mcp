@@ -221,8 +221,8 @@ class ContentSaver:
 
         if self.format == "markdown":
             # Convert to markdown, then modify markdown image paths
-            from scrapling_fetch_mcp._fetcher import _html_to_markdown
-            markdown_content = _html_to_markdown(modified_html)
+            from scrapling_fetch_mcp._html_converter import html_to_markdown
+            markdown_content = html_to_markdown(modified_html)
             final_content = self.content_modifier.modify_markdown(
                 markdown_content, self.image_saver.url_to_local, self.url
             )

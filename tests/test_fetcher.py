@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 def test_convert_with_markitdown(sample_html):
     """Test HTML to Markdown conversion with markitdown"""
-    from scrapling_fetch_mcp._fetcher import _convert_with_markitdown
+    from scrapling_fetch_mcp._html_converter import convert_with_markitdown
 
-    result = _convert_with_markitdown(sample_html)
+    result = convert_with_markitdown(sample_html)
 
     assert "# Test Page" in result
     assert "Some text content" in result
@@ -18,58 +18,58 @@ def test_convert_with_markitdown(sample_html):
 
 def test_convert_with_markdownify(sample_html):
     """Test HTML to Markdown conversion with markdownify"""
-    from scrapling_fetch_mcp._fetcher import _convert_with_markdownify
+    from scrapling_fetch_mcp._html_converter import convert_with_markdownify
 
-    result = _convert_with_markdownify(sample_html)
+    result = convert_with_markdownify(sample_html)
 
     assert "# Test Page" in result
     assert "Some text content" in result
 
 
 def test_html_to_markdown_with_markitdown(sample_html, monkeypatch):
-    """Test _html_to_markdown uses markitdown when configured"""
-    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+    """Test html_to_markdown uses markitdown when configured"""
+    from scrapling_fetch_mcp._html_converter import html_to_markdown
     from scrapling_fetch_mcp._config import config
 
     # Configure to use markitdown
     config.set_markdown_converter("markitdown")
 
-    result = _html_to_markdown(sample_html)
+    result = html_to_markdown(sample_html)
 
     assert "# Test Page" in result
     assert "Some text content" in result
 
 
 def test_html_to_markdown_with_markdownify(sample_html, monkeypatch):
-    """Test _html_to_markdown uses markdownify when configured"""
-    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+    """Test html_to_markdown uses markdownify when configured"""
+    from scrapling_fetch_mcp._html_converter import html_to_markdown
     from scrapling_fetch_mcp._config import config
 
     # Configure to use markdownify
     config.set_markdown_converter("markdownify")
 
-    result = _html_to_markdown(sample_html)
+    result = html_to_markdown(sample_html)
 
     assert "# Test Page" in result
     assert "Some text content" in result
 
 
 def test_html_to_markdown_with_explicit_converter(sample_html):
-    """Test _html_to_markdown with explicit converter parameter"""
-    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+    """Test html_to_markdown with explicit converter parameter"""
+    from scrapling_fetch_mcp._html_converter import html_to_markdown
 
-    result = _html_to_markdown(sample_html, converter="markdownify")
+    result = html_to_markdown(sample_html, converter="markdownify")
 
     assert "# Test Page" in result
     assert "Some text content" in result
 
 
 def test_html_to_markdown_invalid_converter(sample_html):
-    """Test _html_to_markdown raises error for invalid converter"""
-    from scrapling_fetch_mcp._fetcher import _html_to_markdown
+    """Test html_to_markdown raises error for invalid converter"""
+    from scrapling_fetch_mcp._html_converter import html_to_markdown
 
     with pytest.raises(ValueError, match="Unknown converter"):
-        _html_to_markdown(sample_html, converter="invalid")
+        html_to_markdown(sample_html, converter="invalid")
 
 
 @pytest.mark.asyncio
@@ -455,3 +455,37 @@ class TestProgressReporting:
         result = await fetch_page_impl("http://x", "basic", "markdown", 1000, 0, ctx=ctx)
         assert "METADATA" in result  # fetch completed despite progress failure
 
+
+
+class TestAireadCascadeFallback:
+    """airead: 策略空输出时的全文 Markdown 兜底"""
+
+    @pytest.mark.asyncio
+    async def test_empty_strategy_output_falls_back_to_full_page(self, monkeypatch):
+        """策略抽不出正文(输出空白)时,应回退全页 Markdown 转换而非返回空"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._extractor_strategy import ExtractorStrategy
+
+        class EmptyStrategy(ExtractorStrategy):
+            def extract(self, html, url):
+                return ""
+
+        async def fake_browse(*a, **k):
+            page = MagicMock()
+            page.html_content = "<html><body><h1>Fallback Title</h1><p>body text</p></body></html>"
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        monkeypatch.setattr(fetcher_mod.URLMatcher, "match", lambda self, url: "empty_stub")
+        monkeypatch.setattr(
+            fetcher_mod.StrategyFactory, "get_strategy",
+            classmethod(lambda cls, name, config_path=None: EmptyStrategy()),
+        )
+
+        result = fetcher_mod._extract_with_airead(
+            "<html><body><h1>Fallback Title</h1><p>body text</p></body></html>",
+            "https://example.com/page",
+        )
+
+        assert "Fallback Title" in result
+        assert "body text" in result

@@ -1,11 +1,15 @@
 import base64
+import logging
 import re
 from abc import ABC, abstractmethod
 from urllib.parse import parse_qs, unquote, urlparse
 import trafilatura
 from readability import Document
-from bs4 import BeautifulSoup
 from scrapling import Selector
+
+from scrapling_fetch_mcp._html_converter import html_to_markdown
+
+logger = logging.getLogger("scrapling_fetch_mcp")
 
 
 def count_effective_characters(text: str) -> int:
@@ -71,12 +75,9 @@ class ReadabilityStrategy(ExtractorStrategy):
         doc = Document(html)
         clean_html = doc.summary()
 
-        # 转换为 Markdown
-        soup = BeautifulSoup(clean_html, 'html.parser')
-
-        # 简单的 Markdown 转换(后续会使用统一的转换器)
-        text = soup.get_text(separator='\n')
-        return text.strip()
+        # readability 只负责圈定正文区块,Markdown 结构仍由统一转换器补全
+        # (此前用 get_text() 输出纯文本,在 dual 字数对比中丢掉标题/列表/代码块)
+        return html_to_markdown(clean_html).strip()
 
 
 class ScraplingStrategy(ExtractorStrategy):
@@ -119,24 +120,24 @@ class DocumentationStrategy(ExtractorStrategy):
 
 
 class DualExtractorStrategy(ExtractorStrategy):
-    """三重提取器对比策略"""
+    """多重提取器对比策略"""
 
     def extract(self, html: str, url: str) -> str:
-        # 运行三个提取器
-        trafilatura_strategy = TrafilaturaStrategy()
-        readability_strategy = ReadabilityStrategy()
-        scrapling_strategy = ScraplingStrategy()
-
-        result_trafilatura = trafilatura_strategy.extract(html, url)
-        result_readability = readability_strategy.extract(html, url)
-        result_scrapling = scrapling_strategy.extract(html, url)
-
-        # 对比有效字数
-        results = [
-            (count_effective_characters(result_trafilatura), result_trafilatura),
-            (count_effective_characters(result_readability), result_readability),
-            (count_effective_characters(result_scrapling), result_scrapling)
+        # 运行多个提取器;单路失败不拖垮整体,该路计 0 分自然落选
+        extractors = [
+            ("trafilatura", TrafilaturaStrategy()),
+            ("readability", ReadabilityStrategy()),
+            ("scrapling", ScraplingStrategy()),
         ]
+
+        results = []
+        for name, strategy in extractors:
+            try:
+                result = strategy.extract(html, url)
+            except Exception:
+                logger.warning("dual: 提取器 %s 对 %s 抛出异常,按 0 分处理", name, url, exc_info=True)
+                result = ""
+            results.append((count_effective_characters(result), result))
 
         # 返回字数最多的结果
         return max(results, key=lambda x: x[0])[1]

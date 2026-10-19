@@ -1,8 +1,6 @@
 import asyncio
 
 import logging
-import os
-import tempfile
 from functools import reduce
 from json import dumps
 from pathlib import Path
@@ -11,14 +9,11 @@ from re import error as re_error
 from traceback import format_exc
 from typing import Optional
 
-from bs4 import BeautifulSoup
-from markitdown import MarkItDown
-
 from mcp.server.mcpserver.context import Context
 
 from scrapling_fetch_mcp._config import config
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
-from scrapling_fetch_mcp._markdownify import _CustomMarkdownify
+from scrapling_fetch_mcp._html_converter import html_to_markdown
 from scrapling_fetch_mcp._scrapling import browse_url
 from scrapling_fetch_mcp._content_saver import ContentSaver
 from scrapling_fetch_mcp._url_matcher import URLMatcher
@@ -26,58 +21,6 @@ from scrapling_fetch_mcp._strategy_factory import StrategyFactory
 from scrapling_fetch_mcp._markdown_postprocessor import postprocess_markdown
 
 logger = logging.getLogger("scrapling_fetch_mcp")
-
-
-def _convert_with_markitdown(html: str) -> str:
-    """Convert HTML to Markdown using markitdown library
-
-    Note: MarkItDown requires a file path (not HTML string), so we create
-    a temporary file for conversion and clean it up afterward to avoid resource leaks.
-    """
-    # Create temporary file with HTML content
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
-        f.write(html)
-        temp_file = f.name
-
-    try:
-        converter = MarkItDown()
-        result = converter.convert(temp_file)
-        return result.text_content
-    finally:
-        # Clean up temporary file
-        os.unlink(temp_file)
-
-
-def _convert_with_markdownify(html: str) -> str:
-    """Convert HTML to Markdown using markdownify library"""
-    soup = BeautifulSoup(html, "lxml")
-    for script in soup(["script", "style"]):
-        script.extract()
-    body_elm = soup.find("body")
-    return _CustomMarkdownify().convert_soup(body_elm if body_elm else soup)
-
-
-def _html_to_markdown(html: str, converter: Optional[str] = None) -> str:
-    """
-    Convert HTML to Markdown using configured converter.
-
-    Args:
-        html: HTML content to convert
-        converter: Converter to use ('markitdown' or 'markdownify').
-                   If None, uses configured default.
-
-    Returns:
-        Markdown formatted string
-    """
-    if converter is None:
-        converter = config.markdown_converter
-
-    if converter == "markitdown":
-        return _convert_with_markitdown(html)
-    elif converter == "markdownify":
-        return _convert_with_markdownify(html)
-    else:
-        raise ValueError(f"Unknown converter: {converter}")
 
 
 def _search_content(
@@ -136,7 +79,15 @@ def _extract_with_airead(html: str, url: str) -> str:
     # 4. Execute extraction
     markdown = strategy.extract(html, url)
 
-    # 5. Unified postprocessing
+    # 级联兜底:策略抽不出正文(trafilatura 返回 None 等)时,
+    # 退回全页 Markdown 转换,保证有内容返回而非空结果
+    if not markdown or not markdown.strip():
+        logger.info(
+            "airead: 策略 '%s' 输出为空,回退全页 Markdown 转换 (%s)", strategy_name, url
+        )
+        markdown = html_to_markdown(html)
+
+    # Unified postprocessing
     markdown = postprocess_markdown(markdown)
 
     return markdown
@@ -249,7 +200,7 @@ async def fetch_page_impl(
     if format == "airead":
         full_content = _extract_with_airead(html_content, url)
     elif is_markdown:
-        full_content = _html_to_markdown(html_content)
+        full_content = html_to_markdown(html_content)
     else:  # html
         full_content = html_content
 
@@ -304,7 +255,7 @@ async def fetch_pattern_impl(
 
     is_markdown = format == "markdown"
     full_content = (
-        _html_to_markdown(page.html_content) if is_markdown else page.html_content
+        html_to_markdown(page.html_content) if is_markdown else page.html_content
     )
 
     original_length = len(full_content)
