@@ -4,7 +4,13 @@ import base64
 
 from bs4 import BeautifulSoup
 
-from scrapling_fetch_mcp._extractor_strategy import SearchEngineStrategy
+import scrapling_fetch_mcp._search_engines as search_engines
+from scrapling_fetch_mcp._search_engines import (
+    SearchEngineStrategy,
+    is_noise_title,
+    normalize_google_href,
+    resolve_real_url,
+)
 
 
 def bing_ck_url(target: str) -> str:
@@ -52,7 +58,7 @@ def test_extract_real_url_bing_u_a1():
     strategy = SearchEngineStrategy()
     soup = BeautifulSoup("<li><cite>realpython.com</cite></li>", "lxml")
     url = bing_ck_url("https://realpython.com/courses/x/")
-    assert strategy._extract_real_url(soup.find("li"), url) == "https://realpython.com/courses/x/"
+    assert resolve_real_url(soup.find("li"), url) == "https://realpython.com/courses/x/"
 
 
 def test_extract_real_url_bing_invalid_payload_falls_back():
@@ -60,7 +66,7 @@ def test_extract_real_url_bing_invalid_payload_falls_back():
     strategy = SearchEngineStrategy()
     soup = BeautifulSoup("<li></li>", "lxml")
     url = "https://www.bing.com/ck/a?!&&p=x&u=a1!!!!&ntb=1"
-    assert strategy._extract_real_url(soup.find("li"), url) == url
+    assert resolve_real_url(soup.find("li"), url) == url
 
 
 GOTO_HTML = """
@@ -80,7 +86,7 @@ def test_google_goto_followed(monkeypatch):
     """/goto?url= 相对链接应经服务端跟随解析为真实 URL"""
     strategy = SearchEngineStrategy()
     monkeypatch.setattr(
-        strategy, "_follow_goto_redirect",
+        search_engines, "follow_goto_redirect",
         lambda token, timeout=5.0: "https://example.com/asyncio",
     )
     md = strategy.extract(GOTO_HTML, "https://www.google.com/search?q=asyncio")
@@ -90,7 +96,7 @@ def test_google_goto_followed(monkeypatch):
 def test_google_goto_fallback_on_failure(monkeypatch):
     """goto 跟随失败时回退为原始跳转链接"""
     strategy = SearchEngineStrategy()
-    monkeypatch.setattr(strategy, "_follow_goto_redirect", lambda token, timeout=5.0: None)
+    monkeypatch.setattr(search_engines, "follow_goto_redirect", lambda token, timeout=5.0: None)
     md = strategy.extract(GOTO_HTML, "https://www.google.com/search?q=asyncio")
     assert "[查看原文](https://www.google.com/goto?url=CAES1234token)" in md
 
@@ -101,15 +107,15 @@ def test_normalize_url_q_param():
 
     strategy = SearchEngineStrategy()
     href = "/url?sa=t&q=" + quote("https://docs.example.com/guide", safe="")
-    assert strategy._normalize_result_url(href) == "https://docs.example.com/guide"
+    assert normalize_google_href(href) == "https://docs.example.com/guide"
 
 
 def test_normalize_url_shapes():
     """协议相对/完整/未知相对路径的归一化"""
     strategy = SearchEngineStrategy()
-    assert strategy._normalize_result_url("//example.com/x") == "https://example.com/x"
-    assert strategy._normalize_result_url("https://example.com/y") == "https://example.com/y"
-    unknown = strategy._normalize_result_url("/goto?url=")
+    assert normalize_google_href("//example.com/x") == "https://example.com/x"
+    assert normalize_google_href("https://example.com/y") == "https://example.com/y"
+    unknown = normalize_google_href("/goto?url=")
     assert unknown == "https://www.google.com/goto?url="
 
 
@@ -135,24 +141,24 @@ def test_heading_channel_still_extracts_ddg():
 def test_noise_word_boundary():
     """噪音词按整词匹配:不误杀含 ad 子串的正常标题"""
     strategy = SearchEngineStrategy()
-    assert strategy._is_ad_or_noise("Sponsored result")
-    assert strategy._is_ad_or_noise("Ad · something")
-    assert strategy._is_ad_or_noise("People also ask")
-    assert strategy._is_ad_or_noise("Web results")
-    assert not strategy._is_ad_or_noise("AI Mode reply for python asyncio tutorial")
-    assert not strategy._is_ad_or_noise("Understanding Python: Asyncio")
-    assert not strategy._is_ad_or_noise("Adobe Photoshop tutorial")
+    assert is_noise_title("Sponsored result")
+    assert is_noise_title("Ad · something")
+    assert is_noise_title("People also ask")
+    assert is_noise_title("Web results")
+    assert not is_noise_title("AI Mode reply for python asyncio tutorial")
+    assert not is_noise_title("Understanding Python: Asyncio")
+    assert not is_noise_title("Adobe Photoshop tutorial")
 
 
 def test_ui_noise_words_only_match_standalone_titles():
     """News/Videos 等普通英文词仅在独立成标题时视为界面噪音"""
     strategy = SearchEngineStrategy()
-    assert strategy._is_ad_or_noise("News")
-    assert strategy._is_ad_or_noise("Videos")
-    assert strategy._is_ad_or_noise("网页搜索结果")
-    assert not strategy._is_ad_or_noise("China rainfall news report")
-    assert not strategy._is_ad_or_noise("Best videos of the year")
-    assert not strategy._is_ad_or_noise("Maps and routing explained")
+    assert is_noise_title("News")
+    assert is_noise_title("Videos")
+    assert is_noise_title("网页搜索结果")
+    assert not is_noise_title("China rainfall news report")
+    assert not is_noise_title("Best videos of the year")
+    assert not is_noise_title("Maps and routing explained")
 
 
 def test_gstatic_thumbnail_links_skipped():
@@ -224,7 +230,7 @@ def test_extract_real_url_rejects_truncated_cite():
     soup = BeautifulSoup(
         '<div><cite>https://www.chinanews.com.cn/10...</cite></div>', 'lxml')
     fallback = "https://www.google.com/goto?url=x"
-    assert strategy._extract_real_url(soup.find("div"), fallback) == fallback
+    assert resolve_real_url(soup.find("div"), fallback) == fallback
 
 CITE_TRUNCATED_HTML = """
 <html><body><div class="container">
@@ -241,7 +247,7 @@ CITE_TRUNCATED_HTML = """
 def test_cite_truncated_text_not_used_as_real_url(monkeypatch):
     """goto 解析失败且 cite 为截断文本时,保留跳转链接而非坏 URL"""
     strategy = SearchEngineStrategy()
-    monkeypatch.setattr(strategy, "_follow_goto_redirect", lambda token, timeout=5.0: None)
+    monkeypatch.setattr(search_engines, "follow_goto_redirect", lambda token, timeout=5.0: None)
     md = strategy.extract(CITE_TRUNCATED_HTML, "https://www.google.com/search?q=rain")
     assert "chinanews.com.cn/10..." not in md
     assert "[查看原文](https://www.google.com/goto?url=CAESxyz)" in md

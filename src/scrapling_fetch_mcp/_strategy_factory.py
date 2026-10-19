@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Dict, Type, Optional
 import yaml
 
+from scrapling_fetch_mcp._search_engines import SearchEngineStrategy
 from scrapling_fetch_mcp._extractor_strategy import (
     ExtractorStrategy,
     DualExtractorStrategy,
     TrafilaturaStrategy,
     ReadabilityStrategy,
     ScraplingStrategy,
-    SearchEngineStrategy,
     DeveloperPlatformStrategy,
     DocumentationStrategy,
 )

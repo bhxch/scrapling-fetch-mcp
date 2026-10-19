@@ -208,8 +208,8 @@ Matches:
 **Description:** Built-in Markdown conversion
 
 ### search_engine
-**Best for:** Search results (Google, Bing, DuckDuckGo)
-**Description:** Extracts result listings, removes ads
+**Best for:** Search results (Google, Bing, DuckDuckGo, Startpage, Brave, SearxNG)
+**Description:** Per-engine adapters with deterministic selectors; extracts result listings, removes ads
 
 ### developer_platform
 **Best for:** GitHub, GitLab, StackOverflow

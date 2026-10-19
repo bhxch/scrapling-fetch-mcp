@@ -130,7 +130,7 @@ def test_scrapling_strategy_basic():
 
 
 # Specialized Strategies Tests
-from scrapling_fetch_mcp._extractor_strategy import SearchEngineStrategy
+from scrapling_fetch_mcp._search_engines import SearchEngineStrategy
 from scrapling_fetch_mcp._extractor_strategy import DeveloperPlatformStrategy
 from scrapling_fetch_mcp._extractor_strategy import DocumentationStrategy
 

@@ -178,7 +178,7 @@ airead uses **intelligent URL-based routing** to select the best extraction stra
 | Strategy | Best For | Description |
 |----------|----------|-------------|
 | `dual` | General use | Runs 3 extractors (trafilatura + readability + scrapling), selects best result |
-| `search_engine` | Google, Bing, DuckDuckGo | Optimized for search result pages |
+| `search_engine` | Google, Bing, DuckDuckGo, Startpage, Brave, SearxNG | Per-engine adapters with deterministic selectors |
 | `developer_platform` | GitHub, GitLab, StackOverflow | Preserves code blocks, tables, and API docs |
 | `documentation` | MDN, ReadTheDocs, etc. | Optimized for technical documentation |
 | `trafilatura` | News, blogs, articles | Fast general-purpose extraction |

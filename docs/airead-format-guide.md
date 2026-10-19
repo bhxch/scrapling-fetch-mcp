@@ -57,8 +57,8 @@ You can also set it as the default format via server configuration:
 
 ### 5. search_engine
 **Search engine optimization** - Specialized for SERP (Search Engine Results Pages)
-- Routes: Google, Bing, DuckDuckGo
-- Optimized for: Search result listings
+- Routes: Google, Bing, DuckDuckGo, Startpage, Brave, Searx/SearxNG
+- Optimized for: Search result listings (per-engine adapters, generic heuristic as fallback)
 
 ### 6. developer_platform
 **Developer platforms** - Specialized for code repositories and Q&A sites
