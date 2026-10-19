@@ -20,7 +20,10 @@ from scrapling_fetch_mcp._scrapling import browse_url
 from scrapling_fetch_mcp._content_saver import ContentSaver
 from scrapling_fetch_mcp._url_matcher import URLMatcher
 from scrapling_fetch_mcp._strategy_factory import StrategyFactory
-from scrapling_fetch_mcp._markdown_postprocessor import postprocess_markdown
+from scrapling_fetch_mcp._markdown_postprocessor import (
+    apply_markdown_slimming,
+    postprocess_markdown,
+)
 
 logger = logging.getLogger("scrapling_fetch_mcp")
 
@@ -228,6 +231,8 @@ async def fetch_page_impl(
     start_index: int,
     save_content: bool = False,
     scraping_dir: Optional[Path] = None,
+    no_links: bool = False,
+    no_images: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
@@ -295,6 +300,10 @@ async def fetch_page_impl(
     else:  # html
         full_content = html_content
 
+    # 内容瘦身:链接/图片标记对文本模型纯烧 token;html 结构分析不受影响
+    if format != "html":
+        full_content = apply_markdown_slimming(full_content, no_links, no_images)
+
     total_length = len(full_content)
     truncated_content = full_content[start_index : start_index + max_length]
     is_truncated = total_length > (start_index + max_length)
@@ -314,6 +323,8 @@ async def fetch_pattern_impl(
     format: str,
     max_length: int,
     context_chars: int,
+    no_links: bool = False,
+    no_images: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
@@ -357,6 +368,9 @@ async def fetch_pattern_impl(
     else:
         full_content = page.html_content
 
+    if format != "html":
+        full_content = apply_markdown_slimming(full_content, no_links, no_images)
+
     original_length = len(full_content)
     matched_content, match_count = _search_content(
         full_content, search_pattern, context_chars
@@ -386,6 +400,8 @@ async def fetch_page_wrapper(
     start_index: int,
     save_content: bool = False,
     scraping_dir: str = ".temp/scrapling/",
+    no_links: bool = False,
+    no_images: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     """Wrapper: format resolution, Path conversion, error handling."""
@@ -394,7 +410,8 @@ async def fetch_page_wrapper(
         scraping_path = Path(scraping_dir)
         result = await fetch_page_impl(
             url, mode, effective_format, max_length, start_index,
-            save_content=save_content, scraping_dir=scraping_path, ctx=ctx,
+            save_content=save_content, scraping_dir=scraping_path,
+            no_links=no_links, no_images=no_images, ctx=ctx,
         )
         return result
     except ConcurrencyLimitError as e:
@@ -415,6 +432,8 @@ async def fetch_pattern_wrapper(
     format: str,
     max_length: int,
     context_chars: int = 200,
+    no_links: bool = False,
+    no_images: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     """Wrapper: format resolution, airead fallback, error handling."""
@@ -424,7 +443,7 @@ async def fetch_pattern_wrapper(
             effective_format = "markdown"
         result = await fetch_pattern_impl(
             url, search_pattern, mode, effective_format, max_length, context_chars,
-            ctx=ctx,
+            no_links=no_links, no_images=no_images, ctx=ctx,
         )
         return result
     except ConcurrencyLimitError as e:

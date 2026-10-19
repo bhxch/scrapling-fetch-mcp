@@ -625,3 +625,84 @@ class TestPageMetadata:
         meta_line = result.split("\n\n", 1)[0]
         metadata = _json.loads(meta_line.removeprefix("METADATA: "))
         assert metadata["title"] == "Meta Page"
+
+
+class TestMarkdownSlimming:
+    """no_links / no_images 内容瘦身"""
+
+    SLIM_MD = (
+        "# Doc\n\nSee [guide](https://docs.example.com/long/path?q=1) and "
+        "<https://auto.example.com>.\n\n"
+        "![arch diagram](https://example.com/img/arch.png)\n\n"
+        "[1]: https://ref.example.com\n\n"
+        "```python\nlink = '[keep](https://in.code.example)'\n```"
+    )
+
+    def test_strip_links_keeps_text_and_code(self):
+        from scrapling_fetch_mcp._markdown_postprocessor import strip_markdown_links
+        out = strip_markdown_links(self.SLIM_MD)
+
+        assert "[guide](https://docs.example.com" not in out
+        assert "See guide and" in out  # 链接文本保留
+        assert "https://auto.example.com" not in out  # autolink 移除
+        assert "https://ref.example.com" not in out  # 引用定义移除
+        assert "'[keep](https://in.code.example)'" in out  # 代码块原样
+
+    def test_strip_images_keeps_code(self):
+        from scrapling_fetch_mcp._markdown_postprocessor import strip_markdown_images
+        out = strip_markdown_images(self.SLIM_MD)
+
+        assert "arch diagram" not in out
+        assert "arch.png" not in out
+        assert "'[keep](https://in.code.example)'" in out
+
+    def test_slimming_disabled_by_default(self):
+        from scrapling_fetch_mcp._markdown_postprocessor import apply_markdown_slimming
+        out = apply_markdown_slimming(self.SLIM_MD)
+        assert out == self.SLIM_MD
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_no_links(self, monkeypatch):
+        """no_links/no_images 在截断前生效,返回内容不含 URL 标记"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+
+        config.cache.clear_all()
+        page = SimpleNamespace()
+        page.html_content = (
+            "<html><body><p>Read the <a href='https://x.example.com/docs'>manual</a>.</p>"
+            "<img src='https://x.example.com/a.png' alt='photo'></body></html>"
+        )
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl(
+            "http://slim-x", "basic", "markdown", 5000, 0, no_links=True, no_images=True
+        )
+
+        assert "https://x.example.com" not in result
+        assert "manual" in result
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_html_format_unaffected(self, monkeypatch):
+        """format=html 时瘦身参数不生效"""
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+
+        config.cache.clear_all()
+        page = SimpleNamespace()
+        page.html_content = "<html><body><a href='https://y.example.com'>link</a></body></html>"
+
+        async def fake_browse(*a, **k):
+            return page
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        result = await fetch_page_impl(
+            "http://slim-y", "basic", "html", 5000, 0, no_links=True
+        )
+
+        assert "https://y.example.com" in result

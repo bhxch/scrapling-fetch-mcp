@@ -55,6 +55,16 @@ TOOL_PARAMS = {
             "config_key": "scraping_dir",
             "description": "Directory path for saved content (relative or absolute). Default: .temp/scrapling/",
         },
+        "no_links": {
+            "type": bool, "required": False, "default": False,
+            "feature": None,
+            "description": "Strip [text](url) links down to plain text to save tokens (URLs dropped, text kept; code blocks untouched). No effect with format=html.",
+        },
+        "no_images": {
+            "type": bool, "required": False, "default": False,
+            "feature": None,
+            "description": "Remove ![alt](src) image markup to save tokens (text models cannot consume images). No effect with format=html.",
+        },
     },
     "s_fetch_pattern": {
         "url": {
@@ -88,6 +98,16 @@ TOOL_PARAMS = {
             "type": int, "required": False, "default": 200,
             "feature": None,
             "description": "Number of characters to include before and after each match",
+        },
+        "no_links": {
+            "type": bool, "required": False, "default": False,
+            "feature": None,
+            "description": "Strip [text](url) links down to plain text to save tokens (URLs dropped, text kept; code blocks untouched). No effect with format=html.",
+        },
+        "no_images": {
+            "type": bool, "required": False, "default": False,
+            "feature": None,
+            "description": "Remove ![alt](src) image markup to save tokens (text models cannot consume images). No effect with format=html.",
         },
     },
 }
