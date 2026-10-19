@@ -233,6 +233,7 @@ async def fetch_page_impl(
     scraping_dir: Optional[Path] = None,
     no_links: bool = False,
     no_images: bool = False,
+    refresh: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
@@ -251,8 +252,8 @@ async def fetch_page_impl(
         content_saver = ContentSaver(scraping_dir, url, format)
         page_action = content_saver.create_page_action()
 
-    # Check cache first
-    cached_page = config.cache.get(url, effective_mode)
+    # Check cache first; refresh=True 跳过缓存强制重抓(调试站点规则/内容刚更新)
+    cached_page = None if refresh else config.cache.get(url, effective_mode)
     if cached_page is not None:
         page = cached_page
     else:
@@ -325,6 +326,7 @@ async def fetch_pattern_impl(
     context_chars: int,
     no_links: bool = False,
     no_images: bool = False,
+    refresh: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     # URL 重写（在最开始执行，确保缓存基于重写后的 URL）
@@ -336,8 +338,8 @@ async def fetch_pattern_impl(
 
     effective_mode = config.get_effective_mode(mode)
 
-    # Check cache first
-    cached_page = config.cache.get(url, effective_mode)
+    # Check cache first; refresh=True 跳过缓存强制重抓
+    cached_page = None if refresh else config.cache.get(url, effective_mode)
     if cached_page is not None:
         page = cached_page
     else:
@@ -402,6 +404,7 @@ async def fetch_page_wrapper(
     scraping_dir: str = ".temp/scrapling/",
     no_links: bool = False,
     no_images: bool = False,
+    refresh: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     """Wrapper: format resolution, Path conversion, error handling."""
@@ -411,7 +414,7 @@ async def fetch_page_wrapper(
         result = await fetch_page_impl(
             url, mode, effective_format, max_length, start_index,
             save_content=save_content, scraping_dir=scraping_path,
-            no_links=no_links, no_images=no_images, ctx=ctx,
+            no_links=no_links, no_images=no_images, refresh=refresh, ctx=ctx,
         )
         return result
     except ConcurrencyLimitError as e:
@@ -434,6 +437,7 @@ async def fetch_pattern_wrapper(
     context_chars: int = 200,
     no_links: bool = False,
     no_images: bool = False,
+    refresh: bool = False,
     ctx: Optional[Context] = None,
 ) -> str:
     """Wrapper: format resolution, airead fallback, error handling."""
@@ -443,7 +447,7 @@ async def fetch_pattern_wrapper(
             effective_format = "markdown"
         result = await fetch_pattern_impl(
             url, search_pattern, mode, effective_format, max_length, context_chars,
-            no_links=no_links, no_images=no_images, ctx=ctx,
+            no_links=no_links, no_images=no_images, refresh=refresh, ctx=ctx,
         )
         return result
     except ConcurrencyLimitError as e:

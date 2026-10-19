@@ -65,6 +65,11 @@ TOOL_PARAMS = {
             "feature": None,
             "description": "Remove ![alt](src) image markup to save tokens (text models cannot consume images). No effect with format=html.",
         },
+        "refresh": {
+            "type": bool, "required": False, "default": False,
+            "feature": None,
+            "description": "Bypass the page cache and re-fetch. Use after content updates or when tuning site extraction rules; the fresh result is written back to cache.",
+        },
     },
     "s_fetch_pattern": {
         "url": {
@@ -108,6 +113,11 @@ TOOL_PARAMS = {
             "type": bool, "required": False, "default": False,
             "feature": None,
             "description": "Remove ![alt](src) image markup to save tokens (text models cannot consume images). No effect with format=html.",
+        },
+        "refresh": {
+            "type": bool, "required": False, "default": False,
+            "feature": None,
+            "description": "Bypass the page cache and re-fetch. Use after content updates or when tuning site extraction rules; the fresh result is written back to cache.",
         },
     },
 }

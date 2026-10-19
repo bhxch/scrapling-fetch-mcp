@@ -706,3 +706,66 @@ class TestMarkdownSlimming:
         )
 
         assert "https://y.example.com" in result
+
+
+class TestRefreshBypassCache:
+    """refresh=True 绕过缓存强制重抓"""
+
+    def _make_page(self, marker):
+        from types import SimpleNamespace
+        page = SimpleNamespace()
+        page.html_content = f"<html><body><h1>{marker}</h1></body></html>"
+        return page
+
+    @pytest.mark.asyncio
+    async def test_refresh_refetches_and_rewrites_cache(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+
+        config.cache.clear_all()
+        calls = []
+
+        async def fake_browse(*a, **k):
+            calls.append(1)
+            return self._make_page(f"v{len(calls)}")
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+
+        first = await fetch_page_impl("http://refresh-x", "basic", "markdown", 5000, 0)
+        assert len(calls) == 1
+
+        # 默认行为:命中缓存,不再发起抓取
+        again = await fetch_page_impl("http://refresh-x", "basic", "markdown", 5000, 0)
+        assert len(calls) == 1
+        assert "v1" in again
+
+        # refresh=True:绕过缓存重新抓取,并把新结果写回缓存
+        fresh = await fetch_page_impl("http://refresh-x", "basic", "markdown", 5000, 0, refresh=True)
+        assert len(calls) == 2
+        assert "v2" in fresh
+
+        # 之后的默认调用拿到的是 refresh 写回的新缓存
+        after = await fetch_page_impl("http://refresh-x", "basic", "markdown", 5000, 0)
+        assert len(calls) == 2
+        assert "v2" in after
+
+    @pytest.mark.asyncio
+    async def test_pattern_refresh_bypasses_cache(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+        from scrapling_fetch_mcp._config import config
+
+        config.cache.clear_all()
+        calls = []
+
+        async def fake_browse(*a, **k):
+            calls.append(1)
+            return self._make_page("pattern target")
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+
+        await fetch_pattern_impl("http://refresh-p", "target", "basic", "markdown", 5000, 50)
+        await fetch_pattern_impl("http://refresh-p", "target", "basic", "markdown", 5000, 50)
+        assert len(calls) == 1  # 第二次命中缓存
+
+        await fetch_pattern_impl("http://refresh-p", "target", "basic", "markdown", 5000, 50, refresh=True)
+        assert len(calls) == 2

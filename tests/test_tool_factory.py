@@ -46,7 +46,8 @@ class TestBuildToolFunction:
         # (ctx is in the signature but excluded from the client-facing schema
         # by the SDK's find_context_parameter detection).
         expected = {"url", "mode", "format", "max_length", "start_index",
-                     "save_content", "scraping_dir", "no_links", "no_images", "ctx"}
+                     "save_content", "scraping_dir", "no_links", "no_images",
+                     "refresh", "ctx"}
         assert param_names == expected
 
     def test_save_disabled_hides_save_params(self):
@@ -180,7 +181,7 @@ class TestBuildToolFunctionPattern:
         sig = inspect.signature(func)
         param_names = set(sig.parameters.keys())
         expected = {"url", "search_pattern", "mode", "format", "max_length", "context_chars",
-                        "no_links", "no_images", "ctx"}
+                        "no_links", "no_images", "refresh", "ctx"}
         assert param_names == expected
 
     def test_pattern_stealth_disabled_hides_mode(self):
@@ -221,7 +222,7 @@ class TestBuildToolFunctionPattern:
         assert "mode" not in param_names
         assert "format" not in param_names
         assert param_names == {"url", "search_pattern", "max_length", "context_chars",
-                           "no_links", "no_images", "ctx"}
+                           "no_links", "no_images", "refresh", "ctx"}
 
     @pytest.mark.asyncio
     async def test_pattern_delegates_to_impl_with_defaults(self):

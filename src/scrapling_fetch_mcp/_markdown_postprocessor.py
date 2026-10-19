@@ -37,7 +37,8 @@ def postprocess_markdown(markdown: str) -> str:
 # --- LLM 内容瘦身:链接与图片标记对文本模型几乎纯烧 token ---
 
 _IMAGE_RE = compile(r"!\[[^\]]*\]\([^)]*\)")
-_LINK_RE = compile(r"(?<!\!)\[([^\]]+)\]\([^)]*\)")
+# text 允许为空:导航里大量 [](url) 空文本链接也要清掉
+_LINK_RE = compile(r"(?<!\!)\[([^\]]*)\]\([^)]*\)")
 _AUTOLINK_RE = compile(r"<https?://[^>\s]+>")
 _REF_DEF_RE = compile(r"^\s*\[[^\]]+\]:\s*\S+.*$", MULTILINE)
 
