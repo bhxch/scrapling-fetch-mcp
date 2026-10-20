@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import threading
 import urllib.request
 
 logger = logging.getLogger("scrapling_fetch_mcp")
@@ -141,10 +142,30 @@ def ensure_browserforge_data() -> None:
 # keeps browsers in versioned subdirectories under ``browsers/<repo>/<version>``
 # and never writes version.json at the INSTALL_DIR root, so the multiversion
 # manager is asked for the active install before falling back to the legacy
-# layout. The ~1.2 GB download then runs only when needed and an up-to-date
-# server starts without hitting the network.
+# layout. The ~1.2 GB download runs in a background thread so a fresh
+# install never blocks startup; until it lands, stealth requests degrade to
+# basic via :func:`resolve_stealth_degradation`.
 
-_CAMOUFOX_FETCH_TIMEOUT = 600  # Firefox build is large; allow ample time.
+# Background-download safety net only: nothing waits on it, so a generous
+# limit just reaps a wedged fetch (the download has no resume support).
+_CAMOUFOX_FETCH_TIMEOUT = 1800
+
+# Fetch lifecycle: "idle" (never needed), "downloading", "ready", "failed".
+_camoufox_fetch_state = "idle"
+_camoufox_fetch_lock = threading.Lock()
+_camoufox_fetch_thread: threading.Thread | None = None
+
+
+def camoufox_fetch_state() -> str:
+    """Current stealth-browser download lifecycle (see module constants)."""
+    with _camoufox_fetch_lock:
+        return _camoufox_fetch_state
+
+
+def _set_camoufox_fetch_state(state: str) -> None:
+    global _camoufox_fetch_state
+    with _camoufox_fetch_lock:
+        _camoufox_fetch_state = state
 
 
 def _import_camoufox_pkgman():
@@ -183,18 +204,15 @@ def _camoufox_supported() -> bool | None:
         return False
 
 
-def ensure_camoufox() -> None:
-    """Ensure camoufox stealth browser binaries are installed and supported.
+def _run_camoufox_fetch() -> None:
+    """Blocking camoufox fetch worker; runs on the background thread only.
 
-    Runs ``python -m camoufox fetch`` when no usable install is found: either
-    the browser is missing or its version no longer matches the camoufox
-    package's supported range. camoufox's own fetch is idempotent, but we gate
-    it locally so an already-installed server starts without a network
-    round-trip. Failures only warn; basic mode is unaffected.
+    Runs ``python -m camoufox fetch`` and verifies the install state instead
+    of trusting the return code (camoufox >= 0.5 may exit 0 even when the
+    download failed mid-way). Never raises: failures end in the "failed"
+    state and a warning, leaving basic mode unaffected.
     """
-    supported = _camoufox_supported()
-    if supported is None or supported:
-        return
+    _set_camoufox_fetch_state("downloading")
     logger.info("camoufox browser missing or outdated, fetching (~1.2 GB)...")
     try:
         result = subprocess.run(
@@ -205,17 +223,68 @@ def ensure_camoufox() -> None:
         )
     except subprocess.TimeoutExpired:
         logger.warning("camoufox fetch timed out after %d s", _CAMOUFOX_FETCH_TIMEOUT)
+        _set_camoufox_fetch_state("failed")
         return
-    except Exception as exc:  # noqa: BLE001 - keep server starting
+    except Exception as exc:  # noqa: BLE001 - keep server serving
         logger.warning("Failed to run camoufox fetch: %s", exc)
+        _set_camoufox_fetch_state("failed")
         return
-    # camoufox >= 0.5 may exit 0 even when the download failed mid-way, so
-    # verify the install state instead of trusting the return code.
     if _camoufox_supported():
         logger.info("camoufox browser ready")
+        _set_camoufox_fetch_state("ready")
     else:
         logger.warning(
             "camoufox fetch produced no usable install (exit %d): %s",
             result.returncode,
             (result.stderr or "").strip()[:300],
         )
+        _set_camoufox_fetch_state("failed")
+
+
+def ensure_camoufox() -> None:
+    """Ensure camoufox stealth browser binaries are installed and supported.
+
+    When no usable install is found — the browser is missing or its version
+    no longer matches the camoufox package's supported range — the fetch is
+    started on a daemon thread and this returns immediately, so a fresh
+    install never delays server startup. Requests that ask for stealth
+    degrade to basic (see :func:`resolve_stealth_degradation`) until the
+    download lands. Failures only warn; basic mode is unaffected.
+    """
+    global _camoufox_fetch_thread
+    supported = _camoufox_supported()
+    if supported is None or supported:
+        return
+    logger.info("camoufox browser missing, downloading in background (~1.2 GB)...")
+    with _camoufox_fetch_lock:
+        if _camoufox_fetch_thread is not None and _camoufox_fetch_thread.is_alive():
+            return
+        _camoufox_fetch_thread = threading.Thread(
+            target=_run_camoufox_fetch, name="camoufox-fetch", daemon=True
+        )
+        _camoufox_fetch_thread.start()
+
+
+def resolve_stealth_degradation(mode: str) -> tuple[str, str | None]:
+    """Degrade stealth/max-stealth to basic when the browser is not usable.
+
+    Returns ``(mode, None)`` untouched for basic requests or a usable browser.
+    Otherwise returns ``("basic", reason)`` — the reason is meant for the
+    tool's METADATA so callers know the response came from the lighter engine
+    and why. Covers both the download-in-progress window and a permanently
+    missing/failed browser (which would otherwise surface as an opaque
+    scrapling launch error).
+    """
+    if mode not in ("stealth", "max-stealth"):
+        return mode, None
+    if _camoufox_supported():
+        return mode, None
+    if camoufox_fetch_state() == "downloading":
+        return "basic", (
+            "已降级为 basic 模式：stealth 浏览器 camoufox（约 1.2 GB）正在后台下载，"
+            "完成后 stealth 请求自动恢复"
+        )
+    return "basic", (
+        "已降级为 basic 模式：stealth 浏览器 camoufox 不可用（未下载或后台下载失败），"
+        "反爬站点的抓取效果可能下降"
+    )

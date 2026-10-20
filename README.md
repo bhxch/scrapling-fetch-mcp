@@ -25,7 +25,7 @@ This tool is optimized for low-volume retrieval of documentation and reference m
 uv tool install scrapling-fetch-mcp
 ```
 
-**Important**: the stealth browser (~1.2 GB) is fetched automatically on first startup — the server verifies it before listening. If the MCP server times out on first use, the download may still be in progress; wait a few minutes and try again, or pre-install as shown below. (`basic` mode needs no browser at all and works immediately.)
+**Important**: on first startup the stealth browser (~1.2 GB) downloads **in the background** — the server starts listening immediately and `basic` mode works right away. `stealth`/`max-stealth` requests fall back to basic until the download finishes (see below); pre-install to skip that window entirely.
 
 ### Stealth Mode Requirements
 

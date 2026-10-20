@@ -264,74 +264,175 @@ class TestCamoufoxSupported:
 
 
 class TestEnsureCamoufox:
+    """ensure_camoufox 只负责拉起后台线程,自身绝不阻塞调用方"""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fetch_state(self):
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        mod._camoufox_fetch_thread = None
+        mod._camoufox_fetch_state = "idle"
+        yield
+        mod._camoufox_fetch_thread = None
+        mod._camoufox_fetch_state = "idle"
+
     def test_noop_when_camoufox_absent(self):
         with patch(
             "scrapling_fetch_mcp._browser_check._camoufox_supported",
             return_value=None,
         ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run"
-        ) as mock_run:
+            "scrapling_fetch_mcp._browser_check.threading.Thread"
+        ) as mock_thread:
             ensure_camoufox()
-        mock_run.assert_not_called()
+        mock_thread.assert_not_called()
 
     def test_noop_when_installed_version_supported(self):
         with patch(
             "scrapling_fetch_mcp._browser_check._camoufox_supported",
             return_value=True,
         ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run"
-        ) as mock_run:
+            "scrapling_fetch_mcp._browser_check.threading.Thread"
+        ) as mock_thread:
             ensure_camoufox()
-        mock_run.assert_not_called()
+        mock_thread.assert_not_called()
 
-    def test_fetches_when_missing_or_unsupported(self, caplog):
-        success = subprocess.CompletedProcess(args=[], returncode=0)
-        with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_supported",
-            side_effect=[False, True],  # gate first, then post-fetch verification
-        ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run",
-            return_value=success,
-        ) as mock_run:
-            ensure_camoufox()
-        mock_run.assert_called_once()
-        assert mock_run.call_args.args[0][-2:] == ["camoufox", "fetch"]
+    def test_spawns_daemon_thread_when_missing(self):
+        from scrapling_fetch_mcp import _browser_check as mod
 
-    def test_warns_when_fetch_exit_zero_but_no_usable_install(self, caplog):
-        # camoufox >= 0.5 exits 0 even when the download failed mid-way.
-        fake_success = subprocess.CompletedProcess(args=[], returncode=0)
-        with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_supported",
-            side_effect=[False, False],
-        ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run",
-            return_value=fake_success,
-        ):
-            ensure_camoufox()
-        assert any("produced no usable install" in r.message for r in caplog.records)
-
-    def test_warns_when_fetch_fails(self, caplog):
-        failure = subprocess.CompletedProcess(
-            args=[], returncode=1, stderr="network error"
-        )
-        with patch(
-            "scrapling_fetch_mcp._browser_check._camoufox_supported",
-            side_effect=[False, False],
-        ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run",
-            return_value=failure,
-        ):
-            ensure_camoufox()
-        assert any("produced no usable install" in r.message for r in caplog.records)
-        assert any("network error" in r.message for r in caplog.records)
-
-    def test_warns_on_timeout(self, caplog):
         with patch(
             "scrapling_fetch_mcp._browser_check._camoufox_supported",
             return_value=False,
         ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="camoufox", timeout=1),
-        ):
+            "scrapling_fetch_mcp._browser_check.threading.Thread"
+        ) as mock_thread, patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run"
+        ) as mock_run:
             ensure_camoufox()
+        mock_run.assert_not_called()  # 启动路径同步零下载
+        mock_thread.assert_called_once_with(
+            target=mod._run_camoufox_fetch, name="camoufox-fetch", daemon=True
+        )
+        mock_thread.return_value.start.assert_called_once()
+
+    def test_no_second_thread_while_download_in_flight(self):
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        living = MagicMock()
+        living.is_alive.return_value = True
+        mod._camoufox_fetch_thread = living
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
+            return_value=False,
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.threading.Thread"
+        ) as mock_thread:
+            ensure_camoufox()
+        mock_thread.assert_not_called()
+
+
+class TestRunCamoufoxFetch:
+    """后台线程 worker 的同步行为:状态机 + 日志"""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fetch_state(self):
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        mod._camoufox_fetch_state = "idle"
+        yield
+        mod._camoufox_fetch_state = "idle"
+
+    @staticmethod
+    def _run(supported_side_effects, run_result=None, run_side_effect=None):
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        kwargs = {"side_effect": run_side_effect} if run_side_effect else {
+            "return_value": run_result
+        }
+        with patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
+            side_effect=supported_side_effects,
+        ), patch(
+            "scrapling_fetch_mcp._browser_check.subprocess.run", **kwargs
+        ) as mock_run:
+            mod._run_camoufox_fetch()
+        return mock_run
+
+    def test_success_marks_ready(self, caplog):
+        success = subprocess.CompletedProcess(args=[], returncode=0)
+        mock_run = self._run([True], run_result=success)  # 仅抓取后校验一次
+        assert mock_run.call_args.args[0][-2:] == ["camoufox", "fetch"]
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        assert mod.camoufox_fetch_state() == "ready"
+
+    def test_exit_zero_but_no_usable_install_marks_failed(self, caplog):
+        # camoufox >= 0.5 exits 0 even when the download failed mid-way.
+        fake_success = subprocess.CompletedProcess(args=[], returncode=0)
+        self._run([False], run_result=fake_success)
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        assert mod.camoufox_fetch_state() == "failed"
+        assert any("produced no usable install" in r.message for r in caplog.records)
+
+    def test_nonzero_exit_marks_failed(self, caplog):
+        failure = subprocess.CompletedProcess(
+            args=[], returncode=1, stderr="network error"
+        )
+        self._run([False], run_result=failure)
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        assert mod.camoufox_fetch_state() == "failed"
+        assert any("network error" in r.message for r in caplog.records)
+
+    def test_timeout_marks_failed(self, caplog):
+        self._run(
+            [False],
+            run_side_effect=subprocess.TimeoutExpired(cmd="camoufox", timeout=1),
+        )
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        assert mod.camoufox_fetch_state() == "failed"
         assert any("timed out" in r.message for r in caplog.records)
+
+    def test_spawn_failure_marks_failed(self, caplog):
+        self._run([False], run_side_effect=OSError("no camoufox module"))
+        from scrapling_fetch_mcp import _browser_check as mod
+
+        assert mod.camoufox_fetch_state() == "failed"
+        assert any("Failed to run camoufox fetch" in r.message for r in caplog.records)
+
+
+class TestResolveStealthDegradation:
+    """stealth 请求在浏览器未就绪时降级 basic 并给出原因"""
+
+    @staticmethod
+    def _resolve(monkeypatch, supported, state, mode):
+        import scrapling_fetch_mcp._browser_check as mod
+
+        monkeypatch.setattr(mod, "_camoufox_supported", lambda: supported)
+        monkeypatch.setattr(mod, "camoufox_fetch_state", lambda: state)
+        return mod.resolve_stealth_degradation(mode)
+
+    def test_basic_passes_through(self, monkeypatch):
+        assert self._resolve(monkeypatch, False, "downloading", "basic") == (
+            "basic",
+            None,
+        )
+
+    def test_stealth_untouched_when_browser_usable(self, monkeypatch):
+        assert self._resolve(monkeypatch, True, "ready", "stealth") == ("stealth", None)
+        assert self._resolve(monkeypatch, True, "ready", "max-stealth") == (
+            "max-stealth",
+            None,
+        )
+
+    def test_stealth_degrades_while_downloading(self, monkeypatch):
+        mode, note = self._resolve(monkeypatch, False, "downloading", "stealth")
+        assert mode == "basic"
+        assert "后台下载" in note
+
+    def test_stealth_degrades_when_unavailable(self, monkeypatch):
+        for state in ("idle", "failed"):
+            mode, note = self._resolve(monkeypatch, False, state, "max-stealth")
+            assert mode == "basic"
+            assert "不可用" in note
