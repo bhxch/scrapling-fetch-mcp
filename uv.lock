@@ -2292,7 +2292,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "readability-lxml", specifier = ">=0.8.1" },
-    { name = "scrapling", specifier = ">=0.3.6,<0.4" },
+    { name = "scrapling", specifier = ">=0.3.6,<0.3.7" },
     { name = "trafilatura", specifier = ">=1.6.0" },
 ]
 provides-extras = ["test"]
