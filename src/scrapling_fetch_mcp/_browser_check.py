@@ -2,11 +2,11 @@ import importlib.util
 import io
 import logging
 import os
-import subprocess
-import sys
 import tarfile
 import threading
 import urllib.request
+
+from scrapling_fetch_mcp._camoufox_fetch import fetch_camoufox_browser
 
 logger = logging.getLogger("scrapling_fetch_mcp")
 
@@ -134,8 +134,10 @@ def ensure_browserforge_data() -> None:
 # camoufox stealth browser binaries
 # ---------------------------------------------------------------------------
 # Camoufox (a modified Firefox used by stealth/max-stealth modes) is fetched
-# on demand via ``python -m camoufox fetch`` from the daijro/camoufox GitHub
-# releases. Without it, scrapling's stealth engines fail on the missing
+# on demand from the daijro/camoufox GitHub releases via the resumable
+# downloader in :mod:`_camoufox_fetch` (the stock ``python -m camoufox
+# fetch`` has neither resume support nor read timeouts). Without it,
+# scrapling's stealth engines fail on the missing
 # version.json. We trigger the fetch when no usable install is found: either
 # the marker is absent, or its version falls outside the range the installed
 # camoufox package supports (e.g. after a package upgrade). camoufox >= 0.5
@@ -145,10 +147,6 @@ def ensure_browserforge_data() -> None:
 # layout. The ~1.2 GB download runs in a background thread so a fresh
 # install never blocks startup; until it lands, stealth requests degrade to
 # basic via :func:`resolve_stealth_degradation`.
-
-# Background-download safety net only: nothing waits on it, so a generous
-# limit just reaps a wedged fetch (the download has no resume support).
-_CAMOUFOX_FETCH_TIMEOUT = 1800
 
 # Fetch lifecycle: "idle" (never needed), "downloading", "ready", "failed".
 _camoufox_fetch_state = "idle"
@@ -207,37 +205,25 @@ def _camoufox_supported() -> bool | None:
 def _run_camoufox_fetch() -> None:
     """Blocking camoufox fetch worker; runs on the background thread only.
 
-    Runs ``python -m camoufox fetch`` and verifies the install state instead
-    of trusting the return code (camoufox >= 0.5 may exit 0 even when the
-    download failed mid-way). Never raises: failures end in the "failed"
-    state and a warning, leaving basic mode unaffected.
+    The heavy lifting (release resolution, resumable download with stall
+    detection, install) lives in :mod:`_camoufox_fetch`. The install state
+    is verified instead of trusting completion (camoufox >= 0.5 may exit 0
+    even when the download failed mid-way). Never raises: failures end in
+    the "failed" state and a warning, leaving basic mode unaffected.
     """
     _set_camoufox_fetch_state("downloading")
     logger.info("camoufox browser missing or outdated, fetching (~1.2 GB)...")
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "camoufox", "fetch"],
-            capture_output=True,
-            text=True,
-            timeout=_CAMOUFOX_FETCH_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("camoufox fetch timed out after %d s", _CAMOUFOX_FETCH_TIMEOUT)
-        _set_camoufox_fetch_state("failed")
-        return
+        fetch_camoufox_browser()
     except Exception as exc:  # noqa: BLE001 - keep server serving
-        logger.warning("Failed to run camoufox fetch: %s", exc)
+        logger.warning("camoufox browser download failed: %s", exc)
         _set_camoufox_fetch_state("failed")
         return
     if _camoufox_supported():
         logger.info("camoufox browser ready")
         _set_camoufox_fetch_state("ready")
     else:
-        logger.warning(
-            "camoufox fetch produced no usable install (exit %d): %s",
-            result.returncode,
-            (result.stderr or "").strip()[:300],
-        )
+        logger.warning("camoufox download finished but produced no usable install")
         _set_camoufox_fetch_state("failed")
 
 

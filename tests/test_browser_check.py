@@ -1,6 +1,5 @@
 """Tests for browser/browserforge data bootstrapping in _browser_check.py."""
 import io
-import subprocess
 import sys
 import tarfile
 import types
@@ -305,10 +304,10 @@ class TestEnsureCamoufox:
         ), patch(
             "scrapling_fetch_mcp._browser_check.threading.Thread"
         ) as mock_thread, patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run"
-        ) as mock_run:
+            "scrapling_fetch_mcp._browser_check.fetch_camoufox_browser"
+        ) as mock_fetch:
             ensure_camoufox()
-        mock_run.assert_not_called()  # 启动路径同步零下载
+        mock_fetch.assert_not_called()  # 启动路径同步零下载
         mock_thread.assert_called_once_with(
             target=mod._run_camoufox_fetch, name="camoufox-fetch", daemon=True
         )
@@ -331,7 +330,7 @@ class TestEnsureCamoufox:
 
 
 class TestRunCamoufoxFetch:
-    """后台线程 worker 的同步行为:状态机 + 日志"""
+    """后台线程 worker 的同步行为:状态机 + 日志(下载细节见 test_camoufox_fetch)"""
 
     @pytest.fixture(autouse=True)
     def _reset_fetch_state(self):
@@ -341,65 +340,47 @@ class TestRunCamoufoxFetch:
         yield
         mod._camoufox_fetch_state = "idle"
 
-    @staticmethod
-    def _run(supported_side_effects, run_result=None, run_side_effect=None):
+    def test_success_marks_ready(self):
         from scrapling_fetch_mcp import _browser_check as mod
 
-        kwargs = {"side_effect": run_side_effect} if run_side_effect else {
-            "return_value": run_result
-        }
         with patch(
+            "scrapling_fetch_mcp._browser_check.fetch_camoufox_browser"
+        ) as mock_fetch, patch(
             "scrapling_fetch_mcp._browser_check._camoufox_supported",
-            side_effect=supported_side_effects,
-        ), patch(
-            "scrapling_fetch_mcp._browser_check.subprocess.run", **kwargs
-        ) as mock_run:
+            return_value=True,
+        ):
             mod._run_camoufox_fetch()
-        return mock_run
-
-    def test_success_marks_ready(self, caplog):
-        success = subprocess.CompletedProcess(args=[], returncode=0)
-        mock_run = self._run([True], run_result=success)  # 仅抓取后校验一次
-        assert mock_run.call_args.args[0][-2:] == ["camoufox", "fetch"]
-        from scrapling_fetch_mcp import _browser_check as mod
-
+        mock_fetch.assert_called_once()
         assert mod.camoufox_fetch_state() == "ready"
 
-    def test_exit_zero_but_no_usable_install_marks_failed(self, caplog):
-        # camoufox >= 0.5 exits 0 even when the download failed mid-way.
-        fake_success = subprocess.CompletedProcess(args=[], returncode=0)
-        self._run([False], run_result=fake_success)
+    def test_downloader_failure_marks_failed(self, caplog):
         from scrapling_fetch_mcp import _browser_check as mod
 
+        with patch(
+            "scrapling_fetch_mcp._browser_check.fetch_camoufox_browser",
+            side_effect=RuntimeError("incomplete after 10 attempts"),
+        ):
+            mod._run_camoufox_fetch()
         assert mod.camoufox_fetch_state() == "failed"
-        assert any("produced no usable install" in r.message for r in caplog.records)
-
-    def test_nonzero_exit_marks_failed(self, caplog):
-        failure = subprocess.CompletedProcess(
-            args=[], returncode=1, stderr="network error"
+        assert any(
+            "camoufox browser download failed" in r.message for r in caplog.records
         )
-        self._run([False], run_result=failure)
+
+    def test_no_usable_install_after_success_marks_failed(self, caplog):
+        # 下载器报告成功但安装状态校验不过(版本标记损坏等)。
         from scrapling_fetch_mcp import _browser_check as mod
 
+        with patch(
+            "scrapling_fetch_mcp._browser_check.fetch_camoufox_browser"
+        ), patch(
+            "scrapling_fetch_mcp._browser_check._camoufox_supported",
+            return_value=False,
+        ):
+            mod._run_camoufox_fetch()
         assert mod.camoufox_fetch_state() == "failed"
-        assert any("network error" in r.message for r in caplog.records)
-
-    def test_timeout_marks_failed(self, caplog):
-        self._run(
-            [False],
-            run_side_effect=subprocess.TimeoutExpired(cmd="camoufox", timeout=1),
+        assert any(
+            "produced no usable install" in r.message for r in caplog.records
         )
-        from scrapling_fetch_mcp import _browser_check as mod
-
-        assert mod.camoufox_fetch_state() == "failed"
-        assert any("timed out" in r.message for r in caplog.records)
-
-    def test_spawn_failure_marks_failed(self, caplog):
-        self._run([False], run_side_effect=OSError("no camoufox module"))
-        from scrapling_fetch_mcp import _browser_check as mod
-
-        assert mod.camoufox_fetch_state() == "failed"
-        assert any("Failed to run camoufox fetch" in r.message for r in caplog.records)
 
 
 class TestResolveStealthDegradation:
