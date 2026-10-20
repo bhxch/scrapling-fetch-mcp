@@ -29,7 +29,7 @@ uv tool install scrapling-fetch-mcp
 
 ### Stealth Mode Requirements
 
-`stealth` and `max-stealth` modes drive a modified Firefox ([camoufox](https://github.com/daijro/camoufox)) with browserforge fingerprint data. Both are **fetched automatically on first server startup** (the server verifies them before listening), but you can pre-install to avoid a slow first run:
+`stealth` and `max-stealth` modes drive a modified Firefox ([camoufox](https://github.com/daijro/camoufox)) with browserforge fingerprint data. Both are **downloaded in the background on first startup**; until the browser is ready, stealth requests automatically degrade to `basic` and the tool result's `METADATA` carries a `degradation` note saying so. Pre-install to avoid the degraded window:
 
 ```bash
 # camoufox Firefox (~1.2 GB, no resume on interrupted downloads)

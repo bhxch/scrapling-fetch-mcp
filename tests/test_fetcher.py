@@ -945,3 +945,109 @@ class TestRemoteStrategySkipsBrowse:
 
         assert browse_called == []  # 本地抓取被跳过
         assert "Remote Content" in result
+
+
+class TestStealthDegradation:
+    """stealth 浏览器未就绪(后台下载中/下载失败)时请求降级 basic,
+    METADATA 携带 degradation 说明;浏览器可用时原模式直达"""
+
+    def setup_method(self):
+        from scrapling_fetch_mcp._config import config
+        config.cache.clear_all()
+
+    @staticmethod
+    def _page():
+        from types import SimpleNamespace
+        return SimpleNamespace(html_content="<html><body><h1>Body</h1></body></html>")
+
+    @staticmethod
+    def _patch_browser(monkeypatch, supported, state):
+        """降级判定发生在 _browser_check 内部,从源头打桩走真实解析函数"""
+        import scrapling_fetch_mcp._browser_check as mod
+
+        monkeypatch.setattr(mod, "_camoufox_supported", lambda: supported)
+        monkeypatch.setattr(mod, "camoufox_fetch_state", lambda: state)
+
+    @staticmethod
+    def _metadata_of(result: str) -> dict:
+        import json as _json
+
+        return _json.loads(result.split("\n\n", 1)[0].removeprefix("METADATA: "))
+
+    @pytest.mark.asyncio
+    async def test_stealth_degrades_with_metadata_note(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        seen_modes = []
+
+        async def fake_browse(url, mode, page_action=None):
+            seen_modes.append(mode)
+            return self._page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        self._patch_browser(monkeypatch, supported=False, state="downloading")
+
+        result = await fetch_page_impl("http://deg-x", "stealth", "markdown", 5000, 0)
+
+        assert seen_modes == ["basic"]  # 实际抓取降级为 basic
+        metadata = self._metadata_of(result)
+        assert "后台下载" in metadata["degradation"]
+
+    @pytest.mark.asyncio
+    async def test_max_stealth_degrades_with_unavailable_note(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        seen_modes = []
+
+        async def fake_browse(url, mode, page_action=None):
+            seen_modes.append(mode)
+            return self._page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        self._patch_browser(monkeypatch, supported=False, state="failed")
+
+        result = await fetch_page_impl("http://deg-y", "max-stealth", "markdown", 5000, 0)
+
+        assert seen_modes == ["basic"]
+        metadata = self._metadata_of(result)
+        assert "不可用" in metadata["degradation"]
+
+    @pytest.mark.asyncio
+    async def test_usable_browser_keeps_stealth_and_no_note(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        seen_modes = []
+
+        async def fake_browse(url, mode, page_action=None):
+            seen_modes.append(mode)
+            return self._page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        self._patch_browser(monkeypatch, supported=True, state="ready")
+
+        result = await fetch_page_impl("http://deg-z", "stealth", "markdown", 5000, 0)
+
+        assert seen_modes == ["stealth"]
+        assert "degradation" not in self._metadata_of(result)
+
+    @pytest.mark.asyncio
+    async def test_pattern_impl_also_degrades(self, monkeypatch):
+        from scrapling_fetch_mcp import _fetcher as fetcher_mod
+
+        seen_modes = []
+
+        async def fake_browse(url, mode, page_action=None):
+            seen_modes.append(mode)
+            return self._page()
+
+        monkeypatch.setattr(fetcher_mod, "browse_url", fake_browse)
+        self._patch_browser(monkeypatch, supported=False, state="downloading")
+
+        result = await fetch_pattern_impl(
+            "http://deg-p", "Body", "stealth", "markdown", 5000, 50
+        )
+
+        assert seen_modes == ["basic"]
+        metadata = self._metadata_of(result)
+        assert metadata["match_count"] >= 1
+        assert "后台下载" in metadata["degradation"]

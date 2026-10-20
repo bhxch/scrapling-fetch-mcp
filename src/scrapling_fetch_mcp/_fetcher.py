@@ -15,6 +15,7 @@ from mcp.server.mcpserver.context import Context
 from yaml import safe_load as _yaml_safe_load
 
 from scrapling_fetch_mcp._config import config
+from scrapling_fetch_mcp._browser_check import resolve_stealth_degradation
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
 from scrapling_fetch_mcp._extractor_strategy import (
     count_effective_characters,
@@ -219,6 +220,7 @@ def _create_metadata(
     start_index: Optional[int] = None,
     match_count: Optional[int] = None,
     page_metadata: Optional[dict] = None,
+    degradation: Optional[str] = None,
 ) -> str:
     metadata = {
         "total_length": total_length,
@@ -234,6 +236,8 @@ def _create_metadata(
         metadata["match_count"] = match_count
     if page_metadata:
         metadata.update(page_metadata)
+    if degradation:
+        metadata["degradation"] = degradation
     return dumps(metadata)
 
 
@@ -283,6 +287,9 @@ async def fetch_page_impl(
             logger.debug(f"URL rewritten: {original_url} → {url}")
 
     effective_mode = config.get_effective_mode(mode)
+    # stealth 浏览器未就绪(后台下载中/下载失败)时降级 basic;必须在缓存
+    # 查询前定型,让降级结果落在 basic 的缓存键下,并在 METADATA 里说明
+    effective_mode, degradation = resolve_stealth_degradation(effective_mode)
 
     # airead 需要提前做策略路由:远程策略(URL 即输入)可跳过本地抓取
     airead_strategy = None
@@ -375,6 +382,7 @@ async def fetch_page_impl(
     metadata_json = _create_metadata(
         total_length, len(truncated_content), is_truncated, start_index,
         page_metadata=_extract_page_metadata(html_content, negotiated_markdown),
+        degradation=degradation,
     )
     await _maybe_report_progress(ctx, 100, 100, "完成")
     return f"METADATA: {metadata_json}\n\n{truncated_content}"
@@ -400,6 +408,8 @@ async def fetch_pattern_impl(
             logger.debug(f"URL rewritten: {original_url} → {url}")
 
     effective_mode = config.get_effective_mode(mode)
+    # 与 fetch_page_impl 相同的降级规则,见 resolve_stealth_degradation
+    effective_mode, degradation = resolve_stealth_degradation(effective_mode)
 
     # Check cache first; refresh=True 跳过缓存强制重抓
     cached_page = None if refresh else config.cache.get(url, effective_mode)
@@ -442,7 +452,9 @@ async def fetch_pattern_impl(
     )
 
     if not matched_content:
-        metadata_json = _create_metadata(original_length, 0, False, None, 0)
+        metadata_json = _create_metadata(
+            original_length, 0, False, None, 0, degradation=degradation
+        )
         await _maybe_report_progress(ctx, 100, 100, "完成")
         return f"METADATA: {metadata_json}\n\n"
 
@@ -452,6 +464,7 @@ async def fetch_pattern_impl(
     metadata_json = _create_metadata(
         original_length, len(truncated_content), is_truncated, None, match_count,
         page_metadata=_extract_page_metadata(page.html_content, negotiated_markdown),
+        degradation=degradation,
     )
     await _maybe_report_progress(ctx, 100, 100, "完成")
     return f"METADATA: {metadata_json}\n\n{truncated_content}"
