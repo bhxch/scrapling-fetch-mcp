@@ -109,6 +109,10 @@ scrapling-fetch-mcp daemon shutdown --socket daemon-0.3.0-abcd1234   # 定点停
 
 `--browser-pool`（env `SCRAPLING_BROWSER_POOL`）开启后，stealth/max-stealth 请求按 **(eTLD+1 注册域名, mode)** 分桶复用 Firefox 会话，省去每次冷启动（数秒 + 数百 MB 峰值）。跨域名不共享身份；任一重建触发即销毁重建：空闲 >300s、累计年龄 >1800s（指纹新鲜度硬上限）、请求数 >50、抓取异常、疑似挑战页。池上限 4 个活跃会话（`SCRAPLING_POOL_MAX_SESSIONS`，LRU 逐出）。daemon 空闲退出或版本重拉时全部池化会话销毁，不留持久状态。
 
+### 已知限制：多客户端并发下的取消波及
+
+多个客户端会话共享同一 daemon。stealth/max-stealth 抓取配有「取消兜底清扫」：请求被取消且恰好落在浏览器启动窗口时，daemon 会 SIGKILL 其间新出现的浏览器/驱动进程，防止孤儿进程泄漏。该清扫按进程名匹配（camoufox/firefox/playwright），无法区分浏览器归属于哪个请求——若此刻同一 daemon 内还有**其他在飞的浏览器抓取**，清扫会跳过（并发计数防护）；但如果被取消的请求是最后一个在飞者，而兄弟请求的浏览器恰在其后启动，仍存在波及窗口：兄弟请求可能因浏览器被杀而报错。此为 scrapling 上层无法根除的边界（进程层面无归属信息），**受影响的兄弟请求直接重试即可**——前端会自动重拉浏览器/daemon。单客户端顺序使用不受任何影响。
+
 ## Parameters Reference
 
 ### `s_fetch_page` — Fetch Complete Pages

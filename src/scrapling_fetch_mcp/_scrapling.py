@@ -154,6 +154,10 @@ def _kill_spawned_browsers(before: set[int]) -> int:
     return killed
 
 
+# 在飞浏览器抓取计数（并发波及防护，见 _browser_cancel_guard）。
+_INFLIGHT_BROWSER_FETCHES = 0
+
+
 async def _browser_cancel_guard(coro_factory: Callable[[], Any]) -> Any:
     """包一次浏览器抓取：取消落在浏览器启动窗口时不留孤儿进程。
 
@@ -161,15 +165,31 @@ async def _browser_cancel_guard(coro_factory: Callable[[], Any]) -> Any:
     之前完成）。取消路径做两轮 SIGKILL 补扫后原样 re-raise——取消必须继续
     传播。非取消路径（成功/普通异常）不做任何进程清扫：正常关闭由 scrapling
     的 ``__aexit__`` 负责，普通异常下 playwright 自会收割自己拉的进程。
+
+    并发波及防护：清扫按「快照差集 + 进程名匹配」无法区分浏览器归属，daemon
+    模式下会误杀兄弟请求正在使用的浏览器。仍有其他在飞浏览器抓取（计数 >0）
+    时跳过本轮清扫，由最后一个离开者负责——宁可把待收进程留给 daemon 退出
+    （close_all 宽限兜底）或池重建收口，也不打断兄弟请求；被波及请求可重试
+    的代价已避免，见 README「已知限制」。
     """
+    global _INFLIGHT_BROWSER_FETCHES
     before = _descendants(_process_tree(), os.getpid())
+    _INFLIGHT_BROWSER_FETCHES += 1
     try:
-        return await coro_factory()
+        result = await coro_factory()
     except asyncio.CancelledError:
-        _kill_spawned_browsers(before)
-        await asyncio.sleep(_KILL_RESWEEP_DELAY)
-        _kill_spawned_browsers(before)
+        _INFLIGHT_BROWSER_FETCHES -= 1
+        if _INFLIGHT_BROWSER_FETCHES == 0:  # 最后一个离开者才清扫
+            _kill_spawned_browsers(before)
+            await asyncio.sleep(_KILL_RESWEEP_DELAY)
+            _kill_spawned_browsers(before)
         raise
+    except BaseException:
+        _INFLIGHT_BROWSER_FETCHES -= 1
+        raise
+    else:
+        _INFLIGHT_BROWSER_FETCHES -= 1
+        return result
 
 
 async def _do_browse(

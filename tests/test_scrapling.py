@@ -361,6 +361,83 @@ class TestBrowserCancelGuard:
 
         assert await scrapling_mod._browser_cancel_guard(ok) == "page"
 
+    @pytest.mark.asyncio
+    async def test_guard_skips_sweep_while_siblings_inflight(self, monkeypatch):
+        """I3 回归：兄弟浏览器请求在飞时跳过清扫（并发波及防护）。
+
+        清扫按进程名匹配无法区分浏览器归属，daemon 模式下会误杀兄弟请求
+        正在使用的浏览器。计数 >0 时跳过，取消照常传播。
+        """
+        killed: list[set] = []
+        monkeypatch.setattr(
+            scrapling_mod, "_kill_spawned_browsers",
+            lambda before: killed.append(before) or 0,
+        )
+        monkeypatch.setattr(scrapling_mod, "_KILL_RESWEEP_DELAY", 0)
+
+        sibling_started = asyncio.Event()
+        sibling_release = asyncio.Event()
+
+        async def sibling() -> str:
+            async def body():
+                sibling_started.set()
+                await sibling_release.wait()  # 模拟仍在飞的抓取
+                return "sib"
+            return await scrapling_mod._browser_cancel_guard(body)
+
+        async def victim() -> str:
+            async def body():
+                await sibling_started.wait()
+                raise asyncio.CancelledError
+            try:
+                await scrapling_mod._browser_cancel_guard(body)
+            except asyncio.CancelledError:
+                return "cancelled-propagated"  # 取消必须继续传播
+
+        sib_task = asyncio.create_task(sibling())
+        try:
+            assert await asyncio.wait_for(victim(), 5) == "cancelled-propagated"
+            assert killed == []  # 兄弟在飞:本轮清扫被跳过
+            sibling_release.set()
+            assert await asyncio.wait_for(sib_task, 5) == "sib"  # 兄弟不受波及
+            assert killed == []  # 兄弟正常完成,正常路径本就不清扫
+        finally:
+            sibling_release.set()
+        assert scrapling_mod._INFLIGHT_BROWSER_FETCHES == 0  # 计数精确归零
+
+    @pytest.mark.asyncio
+    async def test_guard_sweeps_when_last_leaver_cancelled(self, monkeypatch):
+        """无兄弟在飞（或自己是最后离开者）时清扫照旧，计数归零。"""
+        killed: list[set] = []
+        monkeypatch.setattr(
+            scrapling_mod, "_kill_spawned_browsers",
+            lambda before: killed.append(before) or 0,
+        )
+        monkeypatch.setattr(scrapling_mod, "_KILL_RESWEEP_DELAY", 0)
+
+        async def boom():
+            raise asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await scrapling_mod._browser_cancel_guard(boom)
+        assert len(killed) == 2  # 首轮 + resweep
+        assert scrapling_mod._INFLIGHT_BROWSER_FETCHES == 0
+
+    @pytest.mark.asyncio
+    async def test_guard_counter_reset_on_non_cancel_exception(self, monkeypatch):
+        """普通异常路径不清扫但计数必须归零（BaseException 分支）。"""
+        monkeypatch.setattr(
+            scrapling_mod, "_kill_spawned_browsers",
+            lambda before: pytest.fail("普通异常路径不得清扫"),
+        )
+
+        async def fail():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError):
+            await scrapling_mod._browser_cancel_guard(fail)
+        assert scrapling_mod._INFLIGHT_BROWSER_FETCHES == 0
+
 
 def _pid_gone(pid: int, timeout: float = 2.0) -> bool:
     """SIGKILL 后进程已收尸（轮询等待,内核终止与 wait 可见间有微秒级竞态）"""
