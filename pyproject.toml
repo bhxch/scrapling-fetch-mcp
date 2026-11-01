@@ -69,6 +69,14 @@ test = [
     "pytest-cov>=4.1.0",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: 需要真实 daemon/浏览器的端到端用例",
+]
+# slow 用例默认排除（真 daemon spawn + 真实抓取,分钟级）；addopts 先于命令行
+# 参数展开,显式 `pytest -m slow` 时命令行的 -m 后置覆盖,仍可单独选择。
+addopts = "-m 'not slow'"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
