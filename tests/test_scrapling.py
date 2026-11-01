@@ -1,4 +1,10 @@
 """Tests for scrapling wrapper"""
+import asyncio
+import os
+import subprocess
+import sys
+import time
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -291,3 +297,81 @@ class TestGetPoolSingleton:
             assert stats["sessions"] == 0 and stats["hits"] == 0
         finally:
             scrapling_mod._pool = None
+
+
+class TestBrowserCancelGuard:
+    """取消兜底清扫：快照后新增的浏览器/驱动后代被 SIGKILL（孤儿泄漏防线）"""
+
+    def test_process_tree_and_descendants(self):
+        tree = scrapling_mod._process_tree()
+        assert os.getpid() in tree
+        # 构造真实子进程:pid 互为父子关系可被 BFS 找到
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            fresh = scrapling_mod._descendants(scrapling_mod._process_tree(), os.getpid())
+            assert child.pid in fresh
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_kill_spawned_browsers_kills_only_matching_descendants(self):
+        # 模拟浏览器后代:cmdline 含 camoufox 字样的常驻子进程
+        browser_like = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)", "camoufox-sim"]
+        )
+        # 不命中的后代:cmdline 无浏览器字样,绝不被误杀
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            time.sleep(0.3)  # 等两个子进程真正起来(出现在 /proc)
+            killed = scrapling_mod._kill_spawned_browsers(before=set())
+            assert killed >= 1
+            assert _pid_gone(browser_like.pid), "浏览器样后代未被击杀"
+            assert not _pid_gone(bystander.pid), "非浏览器后代被误杀"
+        finally:
+            bystander.kill()
+            bystander.wait()
+
+    def test_kill_spawned_browsers_spares_preexisting(self):
+        # before 快照已有的浏览器样后代不在清扫范围(并发请求的浏览器不受影响)
+        preexisting = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)", "camoufox-sim"]
+        )
+        try:
+            time.sleep(0.3)
+            killed = scrapling_mod._kill_spawned_browsers(before={preexisting.pid})
+            assert killed == 0
+            assert not _pid_gone(preexisting.pid), "快照内进程被误杀"
+        finally:
+            preexisting.kill()
+            preexisting.wait()
+
+    @pytest.mark.asyncio
+    async def test_guard_reraises_and_sweeps(self):
+        # 取消路径:清扫后 CancelledError 原样传播(取消必须继续传播)
+        async def boom():
+            raise asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await scrapling_mod._browser_cancel_guard(boom)
+
+    @pytest.mark.asyncio
+    async def test_guard_passthrough_on_success(self):
+        async def ok():
+            return "page"
+
+        assert await scrapling_mod._browser_cancel_guard(ok) == "page"
+
+
+def _pid_gone(pid: int, timeout: float = 2.0) -> bool:
+    """SIGKILL 后进程已收尸（轮询等待,内核终止与 wait 可见间有微秒级竞态）"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                return True
+        except ChildProcessError:
+            return True  # 非本进程子进程:信号已发
+        time.sleep(0.05)
+    return False
+
+

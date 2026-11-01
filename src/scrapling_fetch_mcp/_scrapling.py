@@ -1,5 +1,10 @@
+import asyncio
+import os
+import re
+import signal
 from contextlib import redirect_stdout
 from os import devnull
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from scrapling_fetch_mcp._config import config
@@ -65,6 +70,108 @@ def get_pool() -> Any:
     return _pool
 
 
+# ---------------------------------------------------------------------------
+# 取消时的浏览器进程兜底清理
+# ---------------------------------------------------------------------------
+# scrapling 经 ``async with AsyncStealthySession`` 管理浏览器生命周期；若请求
+# 取消恰好落在 ``__aenter__`` 的浏览器启动窗口内（``launch_persistent_context``
+# 已 spawn 浏览器/driver 进程但 context 尚未建完），``__aexit__`` 不会执行，
+# 进程孤儿化、一直活到 daemon 进程退出断管才死（集成测试实测 6s 后仍残留 7 个
+# camoufox 进程）。scrapling 无法从外部补救，只能 OS 层兜底：daemon 经
+# start_new_session 是自身会话首，其拉起的浏览器/driver 必为本进程后代——
+# 调用前快照后代 pid，取消时 SIGKILL 其间新出现的浏览器/驱动进程。
+
+# 进程名过滤：只杀 cmdline 命中浏览器/驱动的后代（camoufox 全家、playwright
+# 的 node driver），并发场景下波及面收敛到「本 daemon 自己拉的浏览器家族」。
+_BROWSER_PROC_PATTERN = re.compile(r"camoufox|firefox|playwright", re.IGNORECASE)
+# 首轮击杀后留一拍，让垂死进程在启动期 fork 出的子进程冒头再补一轮
+_KILL_RESWEEP_DELAY = 0.5
+
+
+def _process_tree() -> dict[int, int]:
+    """读 /proc 一趟，返回 pid → ppid 映射（条目读不到/已退出则跳过）。
+
+    无 /proc 的平台（macOS）返回空表——调用方按「无后代可清」处理，兜底
+    降级为不作为，不影响正常抓取。
+    """
+    tree: dict[int, int] = {}
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return tree
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8")
+            # comm 字段可含空格与括号，从最后一个 ')' 之后切字段
+            fields = stat[stat.rindex(")") + 1:].split()
+            tree[int(entry.name)] = int(fields[1])  # fields[1] 即 ppid
+        except (OSError, ValueError, IndexError):
+            continue
+    return tree
+
+
+def _descendants(tree: dict[int, int], root: int) -> set[int]:
+    """进程树中 root 的全部后代 pid（BFS；空树返回空集）。"""
+    children: dict[int, list[int]] = {}
+    for pid, ppid in tree.items():
+        children.setdefault(ppid, []).append(pid)
+    out: set[int] = set()
+    stack = [root]
+    while stack:
+        for child in children.get(stack.pop(), ()):
+            if child not in out:
+                out.add(child)
+                stack.append(child)
+    return out
+
+
+def _proc_cmdline(pid: int) -> str:
+    """/proc/<pid>/cmdline 的 NUL 分隔参数拼成空格串；读不到返回空串。"""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", "replace")
+
+
+def _kill_spawned_browsers(before: set[int]) -> int:
+    """SIGKILL 快照 ``before`` 之后新出现的、cmdline 命中浏览器的后代进程。
+
+    返回击杀数；进程已死/无权限均跳过（兜底尽力而为）。
+    """
+    fresh = _descendants(_process_tree(), os.getpid()) - before
+    killed = 0
+    for pid in fresh:
+        if _BROWSER_PROC_PATTERN.search(_proc_cmdline(pid)) is None:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed += 1
+        except (ProcessLookupError, PermissionError):
+            continue
+    return killed
+
+
+async def _browser_cancel_guard(coro_factory: Callable[[], Any]) -> Any:
+    """包一次浏览器抓取：取消落在浏览器启动窗口时不留孤儿进程。
+
+    ``coro_factory`` 零参返回 awaitable（惰性构造：快照须在浏览器进程出现
+    之前完成）。取消路径做两轮 SIGKILL 补扫后原样 re-raise——取消必须继续
+    传播。非取消路径（成功/普通异常）不做任何进程清扫：正常关闭由 scrapling
+    的 ``__aexit__`` 负责，普通异常下 playwright 自会收割自己拉的进程。
+    """
+    before = _descendants(_process_tree(), os.getpid())
+    try:
+        return await coro_factory()
+    except asyncio.CancelledError:
+        _kill_spawned_browsers(before)
+        await asyncio.sleep(_KILL_RESWEEP_DELAY)
+        _kill_spawned_browsers(before)
+        raise
+
+
 async def _do_browse(
     url: str,
     mode: str,
@@ -77,8 +184,10 @@ async def _do_browse(
         # 浏览器池（默认关）：开启时 stealth/max-stealth 改走池化会话。
         # 放在本函数内 => 保持在 browse_url 的并发闸门之内（spec §6.2）。
         if mode in ("stealth", "max-stealth") and config.browser_pool:
-            return await get_pool().fetch(
-                url, mode, int(config.fetch_timeout * 1000), page_action=page_action
+            return await _browser_cancel_guard(
+                lambda: get_pool().fetch(
+                    url, mode, int(config.fetch_timeout * 1000), page_action=page_action
+                )
             )
 
         if mode == "basic":
@@ -90,25 +199,29 @@ async def _do_browse(
             _attach_negotiated_markdown(response)
             return response
         elif mode == "stealth":
-            return await StealthyFetcher.async_fetch(
-                url,
-                headless=True,
-                network_idle=True,
-                # camoufox 默认 30s 导航超时,对故意拖延 load 事件的站点
-                # (如 Brave Search)不够;沿用全局 fetch_timeout(秒)
-                timeout=int(config.fetch_timeout * 1000),
-                page_action=page_action,
+            return await _browser_cancel_guard(
+                lambda: StealthyFetcher.async_fetch(
+                    url,
+                    headless=True,
+                    network_idle=True,
+                    # camoufox 默认 30s 导航超时,对故意拖延 load 事件的站点
+                    # (如 Brave Search)不够;沿用全局 fetch_timeout(秒)
+                    timeout=int(config.fetch_timeout * 1000),
+                    page_action=page_action,
+                )
             )
         elif mode == "max-stealth":
-            return await StealthyFetcher.async_fetch(
-                url,
-                headless=True,
-                block_webrtc=True,
-                network_idle=True,
-                disable_resources=False,
-                block_images=False,
-                timeout=int(config.fetch_timeout * 1000),
-                page_action=page_action,
+            return await _browser_cancel_guard(
+                lambda: StealthyFetcher.async_fetch(
+                    url,
+                    headless=True,
+                    block_webrtc=True,
+                    network_idle=True,
+                    disable_resources=False,
+                    block_images=False,
+                    timeout=int(config.fetch_timeout * 1000),
+                    page_action=page_action,
+                )
             )
         else:
             raise ValueError(f"Unknown mode: {mode}")
