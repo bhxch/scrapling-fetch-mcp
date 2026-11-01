@@ -1,6 +1,6 @@
 [project]
 name = "scrapling-fetch-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Helps AI assistants access text content from bot-protected websites. MCP server that fetches HTML/markdown from sites with anti-automation measures using Scrapling."
 readme = "README.md"
 authors = [
@@ -46,6 +46,12 @@ dependencies = [
     # Revisit only as a deliberate upstream migration (add patchright,
     # rework stealth modes).
     "scrapling>=0.3.6,<0.3.7",
+    # Direct dependency on purpose: daemon/pool.py imports tldextract at
+    # module level for (eTLD+1, mode) browser-pool bucket keys (bundled
+    # suffix snapshot, no network). Previously only transitive via
+    # trafilatura/scrapling — declaring it here keeps the pool import
+    # working even if those drop it upstream.
+    "tldextract>=5.0",
     "trafilatura>=1.6.0",
 ]
 

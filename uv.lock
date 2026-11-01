@@ -2230,7 +2230,7 @@ wheels = [
 
 [[package]]
 name = "scrapling-fetch-mcp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -2248,6 +2248,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "readability-lxml" },
     { name = "scrapling" },
+    { name = "tldextract" },
     { name = "trafilatura" },
 ]
 
@@ -2278,6 +2279,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "readability-lxml", specifier = ">=0.8.1" },
     { name = "scrapling", specifier = ">=0.3.6,<0.3.7" },
+    { name = "tldextract", specifier = ">=5.0" },
     { name = "trafilatura", specifier = ">=1.6.0" },
 ]
 provides-extras = ["test"]
