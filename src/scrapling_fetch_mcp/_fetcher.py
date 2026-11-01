@@ -8,7 +8,7 @@ from re import compile
 from re import error as re_error
 from traceback import format_exc
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 from bs4 import BeautifulSoup
 from mcp.server.mcpserver.context import Context
@@ -141,13 +141,32 @@ def _search_content(
         return f"ERROR: Invalid regex pattern: {str(e)}", 0
 
 
+def _suspicious_text(markdown: str) -> bool:
+    """jina 仲裁可疑判定本体:空正文或有效字数低于阈值。"""
+    if not markdown or not markdown.strip():
+        return True
+    return count_effective_characters(markdown) < config.jina_min_chars
+
+
 def _should_arbitrate(markdown: str) -> bool:
     """本地抽取结果可疑(空或有效字数低于阈值)时才值得外发 Jina 仲裁。"""
     if config.jina_arbiter_disabled:
         return False
-    if not markdown or not markdown.strip():
-        return True
-    return count_effective_characters(markdown) < config.jina_min_chars
+    return _suspicious_text(markdown)
+
+
+def looks_suspicious(response: Any) -> bool:
+    """浏览器响应疑似挑战页——会话身份恐已被站点标记,不可复用。
+
+    与 jina 仲裁共用同一套本地可疑判定(_suspicious_text);不受
+    jina_arbiter_disabled 影响——关仲裁只是不外发对比,本地可疑信号
+    依旧成立(daemon 浏览器池据此触发销毁重建,spec §6.2 触发 4)。
+    """
+    markdown = getattr(response, "markdown_content", None)
+    if not isinstance(markdown, str) or not markdown:
+        html = getattr(response, "html_content", None) or ""
+        markdown = html_to_markdown(html)
+    return _suspicious_text(markdown)
 
 
 async def _arbitrate_with_jina(url: str) -> str:

@@ -160,3 +160,134 @@ class TestMarkdownContentNegotiation:
         resp = await scrapling_mod._do_browse("http://x", "basic")
 
         assert getattr(resp, "markdown_content", None) is None
+
+
+class FakePool:
+    """池替身：记录 fetch 入参，可断言路由是否经池。"""
+
+    def __init__(self):
+        self.calls = []
+
+    async def fetch(self, url, mode, timeout_ms, page_action=None):
+        self.calls.append((url, mode, timeout_ms, page_action))
+        return "pooled-page"
+
+
+class TestBrowserPoolRouting:
+    """config.browser_pool 开关：stealth/max-stealth 走池，basic 与关闭时走原路径"""
+
+    def setup_method(self):
+        scrapling_mod._pool = None
+
+    def teardown_method(self):
+        scrapling_mod._pool = None
+
+    @pytest.mark.asyncio
+    async def test_enabled_stealth_routes_through_pool(self, monkeypatch):
+        from scrapling_fetch_mcp._config import config
+
+        fake_pool = FakePool()
+        monkeypatch.setattr(scrapling_mod, "get_pool", lambda: fake_pool)
+        called = []
+        timeout_ms = int(config.fetch_timeout * 1000)
+
+        async def fail_fetch(url, **kwargs):
+            called.append(url)  # 池开启时不应直连 StealthyFetcher
+            return "direct-page"
+
+        monkeypatch.setattr(
+            "scrapling.fetchers.StealthyFetcher.async_fetch", fail_fetch)
+
+        original = config.browser_pool
+        config.set_browser_pool(True)
+        try:
+            result = await scrapling_mod._do_browse("http://x", "stealth", None)
+        finally:
+            config.set_browser_pool(original)
+        assert result == "pooled-page"
+        assert called == []  # 未走原路径
+        assert fake_pool.calls == [("http://x", "stealth", timeout_ms, None)]
+
+    @pytest.mark.asyncio
+    async def test_enabled_max_stealth_routes_through_pool(self, monkeypatch):
+        from scrapling_fetch_mcp._config import config
+
+        fake_pool = FakePool()
+        monkeypatch.setattr(scrapling_mod, "get_pool", lambda: fake_pool)
+        timeout_ms = int(config.fetch_timeout * 1000)
+        original = config.browser_pool
+        config.set_browser_pool(True)
+        try:
+            await scrapling_mod._do_browse("http://x", "max-stealth", None)
+        finally:
+            config.set_browser_pool(original)
+        assert fake_pool.calls == [("http://x", "max-stealth", timeout_ms, None)]
+
+    @pytest.mark.asyncio
+    async def test_enabled_basic_ignores_pool(self, monkeypatch):
+        """basic 模式永不经池:浏览器池开启时也保持原行为"""
+        from scrapling_fetch_mcp._config import config
+        from types import SimpleNamespace
+
+        fake_pool = FakePool()
+        monkeypatch.setattr(scrapling_mod, "get_pool", lambda: fake_pool)
+
+        async def fake_get(url, **kwargs):
+            return SimpleNamespace(body=b"<html></html>", html_content="<html></html>",
+                                   headers={"Content-Type": "text/html"})
+
+        monkeypatch.setattr("scrapling.fetchers.AsyncFetcher.get", fake_get)
+        original = config.browser_pool
+        config.set_browser_pool(True)
+        try:
+            resp = await scrapling_mod._do_browse("http://x", "basic")
+        finally:
+            config.set_browser_pool(original)
+        assert fake_pool.calls == []
+        assert getattr(resp, "markdown_content", None) is None
+
+    @pytest.mark.asyncio
+    async def test_disabled_keeps_original_path(self, monkeypatch):
+        """池关闭(默认):stealth 走原 StealthyFetcher 路径,不触达 get_pool"""
+        from scrapling_fetch_mcp._config import config
+
+        def fail_get_pool():
+            raise AssertionError("browser_pool=False 时不应构造/使用池")
+
+        monkeypatch.setattr(scrapling_mod, "get_pool", fail_get_pool)
+        captured = {}
+
+        async def fake_fetch(url, **kwargs):
+            captured.update(kwargs)
+            return "direct-page"
+
+        monkeypatch.setattr(
+            "scrapling.fetchers.StealthyFetcher.async_fetch", fake_fetch)
+
+        assert config.browser_pool is False  # 默认关闭
+        result = await scrapling_mod._do_browse("http://x", "stealth")
+        assert result == "direct-page"
+        assert "timeout" in captured
+
+
+class TestGetPoolSingleton:
+    """get_pool 惰性单例:参数取自 config,二次调用同一实例"""
+
+    def setup_method(self):
+        scrapling_mod._pool = None
+
+    def teardown_method(self):
+        scrapling_mod._pool = None
+
+    def test_lazy_singleton_reads_config(self):
+        from scrapling_fetch_mcp._config import config
+        from scrapling_fetch_mcp.daemon.pool import BrowserPool
+
+        pool = scrapling_mod.get_pool()
+        try:
+            assert isinstance(pool, BrowserPool)
+            assert scrapling_mod.get_pool() is pool  # 同一实例
+            stats = pool.stats()
+            assert stats["sessions"] == 0 and stats["hits"] == 0
+        finally:
+            scrapling_mod._pool = None

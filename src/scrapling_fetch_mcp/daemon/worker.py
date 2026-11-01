@@ -243,6 +243,15 @@ class DaemonWorker:
                 task.cancel()
             # 限时收尾：正常取消毫秒级返回；杀不死的应用层僵尸由进程退出兜底
             await asyncio.wait(list(self._tasks.values()), timeout=_EXIT_TASK_GRACE)
+        # 浏览器池收口（spec §6.2：daemon 退出不留池化浏览器）。放在任务
+        # 收尾之后——无在飞 fetch 时 close_all 才安全。仅当池已惰性构造过
+        # 才关（默认关时 _pool 为 None，零开销）。
+        pool = getattr(_scrapling, "_pool", None)
+        if pool is not None:
+            try:
+                await pool.close_all()
+            except Exception:  # noqa: BLE001  退出路径关闭失败不阻断清锁删 sock
+                logger.warning("浏览器池收口失败", exc_info=True)
         for path in (self._lock_path, self._sock):
             try:
                 path.unlink()
@@ -340,13 +349,16 @@ class DaemonWorker:
 
     def _status_result(self) -> dict:
         _effective_mode, degradation = resolve_stealth_degradation("stealth")
+        # 浏览器池统计：默认关（None）；开启时惰性构造空池 harmless——
+        # 只有 fetch 才拉浏览器，stats 报零值即"池已启用尚无会话"
+        pool_stats = _scrapling.get_pool().stats() if config.browser_pool else None
         return {
             **self._identity(),
-            # PageCache 未暴露公开 size；Task 11 统一接 stats() 时一并收编
+            # PageCache 未暴露公开 size；暂以内部 _cache 计数披露
             "cache_entries": len(config.cache._cache),  # noqa: SLF001
             "stealth_ready": _effective_mode == "stealth",
             "degradation": degradation,
-            "pool": None,  # Task 11 接浏览器池真实统计
+            "pool": pool_stats,
         }
 
     async def _handle_cancel(self, req_id: int, payload: object, send) -> bytes:

@@ -43,6 +43,28 @@ def init_guard(max_concurrent: int, acquire_timeout: float) -> None:
     _guard = ConcurrencyGuard(max_concurrent, acquire_timeout)
 
 
+_pool: Any = None
+
+
+def get_pool() -> Any:
+    """惰性单例浏览器池：首次使用时按 config 定参构造（不启动任何浏览器）。
+
+    daemon/pool 的模块级 import 是轻依赖（scrapling 在其工厂内惰性导入），
+    惰性构造只为让 browser_pool 关闭时零开销。参数在首次构造时定型。
+    """
+    global _pool
+    if _pool is None:
+        from scrapling_fetch_mcp.daemon.pool import BrowserPool
+
+        _pool = BrowserPool(
+            idle_ttl=config.pool_idle_ttl,
+            max_age=config.pool_max_age,
+            max_sessions=config.pool_max_sessions,
+            max_requests=config.pool_max_requests,
+        )
+    return _pool
+
+
 async def _do_browse(
     url: str,
     mode: str,
@@ -51,6 +73,13 @@ async def _do_browse(
     """Actual scrapling fetch (extracted from browse_url)."""
     with open(devnull, "w") as nullfd, redirect_stdout(nullfd):
         from scrapling.fetchers import AsyncFetcher, StealthyFetcher
+
+        # 浏览器池（默认关）：开启时 stealth/max-stealth 改走池化会话。
+        # 放在本函数内 => 保持在 browse_url 的并发闸门之内（spec §6.2）。
+        if mode in ("stealth", "max-stealth") and config.browser_pool:
+            return await get_pool().fetch(
+                url, mode, int(config.fetch_timeout * 1000), page_action=page_action
+            )
 
         if mode == "basic":
             response = await AsyncFetcher.get(

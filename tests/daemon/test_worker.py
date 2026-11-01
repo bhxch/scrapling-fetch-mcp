@@ -430,7 +430,32 @@ async def test_status_reports_snapshot(tmp_path):
     for key in ("pid", "pkg", "uptime_s", "clients", "cache_entries",
                 "stealth_ready", "degradation"):
         assert key in r
-    assert r["pool"] is None  # Task 11 才接真实池统计
+    assert r["pool"] is None  # browser_pool 默认关:不暴露池统计
+
+
+@pytest.mark.asyncio
+async def test_status_pool_stats_when_browser_pool_enabled(tmp_path, monkeypatch):
+    """browser_pool 开启时 status 的 pool 字段接真实 stats()"""
+    from scrapling_fetch_mcp import _scrapling
+    from scrapling_fetch_mcp._config import config
+
+    fake_stats = {"sessions": 2, "hits": 5, "misses": 3, "buckets": ["example.com"]}
+
+    class FakePool:
+        def stats(self):
+            return fake_stats
+
+    monkeypatch.setattr(_scrapling, "get_pool", lambda: FakePool())
+    original = config.browser_pool
+    config.set_browser_pool(True)
+    try:
+        async with serve_worker(tmp_path) as h:
+            async with Client(h.sock) as c:
+                resp = await c.request(OP_STATUS, {}, h.worker.token, 1)
+    finally:
+        config.set_browser_pool(original)
+    assert resp["ok"] is True
+    assert resp["result"]["pool"] == fake_stats
 
 
 # ---------- 空闲退出 / shutdown ----------
@@ -471,6 +496,30 @@ async def test_shutdown_op_stops_worker(tmp_path):
             await asyncio.wait_for(h.task, 2.0)  # 响应后 serve() 优雅返回
     assert not h.sock.exists()
     assert not h.sock.with_suffix(".lock").exists()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_closes_pool_when_constructed(tmp_path, monkeypatch):
+    """spec §6.2:daemon 退出销毁全部池化会话;池未构造(默认关)则零触碰"""
+    from scrapling_fetch_mcp import _scrapling
+
+    class FakePool:
+        def __init__(self):
+            self.closed = 0
+
+        async def close_all(self):
+            self.closed += 1
+
+    # 池未构造:cleanup 不触碰
+    monkeypatch.setattr(_scrapling, "_pool", None)
+    w = worker_mod.DaemonWorker(tmp_path / "w.sock", 30.0, config_hash="ab")
+    await w._cleanup()
+    # 池已构造:cleanup 经 close_all 收口
+    fake = FakePool()
+    monkeypatch.setattr(_scrapling, "_pool", fake)
+    w = worker_mod.DaemonWorker(tmp_path / "w2.sock", 30.0, config_hash="ab")
+    await w._cleanup()
+    assert fake.closed == 1
 
 
 # ---------- __main__ 入口 ----------

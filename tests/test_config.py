@@ -243,17 +243,26 @@ def test_cache_max_entries_env(monkeypatch):
     assert cfg.cache_max_entries == 16
 
 def test_pool_and_daemon_defaults_and_env(monkeypatch):
+    # browser_pool 等字段自 Task 11 起被 _do_browse/worker status 运行期消费,
+    # 单例泄漏会改变后续测试行为——测试结束必须还原(文件惯例的单例手法
+    # 保留,只补还原步骤)
     cfg = _fresh_config()
-    assert cfg.browser_pool is False
-    assert (cfg.pool_idle_ttl, cfg.pool_max_age, cfg.pool_max_sessions, cfg.pool_max_requests) == (300.0, 1800.0, 4, 50)
-    assert cfg.daemon_idle_timeout == 600.0 and cfg.daemon_dir is None
-    monkeypatch.setenv("SCRAPLING_BROWSER_POOL", "true")
-    monkeypatch.setenv("SCRAPLING_POOL_MAX_SESSIONS", "2")
-    monkeypatch.setenv("SCRAPLING_DAEMON_DIR", "/tmp/xyz")
-    monkeypatch.setenv("SCRAPLING_DAEMON_IDLE_TIMEOUT", "60")
-    init_config_from_env()
-    assert cfg.browser_pool is True and cfg.pool_max_sessions == 2
-    assert cfg.daemon_dir == Path("/tmp/xyz") and cfg.daemon_idle_timeout == 60.0
+    saved = (cfg._browser_pool, cfg._pool_max_sessions,
+             cfg._daemon_dir, cfg._daemon_idle_timeout)
+    try:
+        assert cfg.browser_pool is False
+        assert (cfg.pool_idle_ttl, cfg.pool_max_age, cfg.pool_max_sessions, cfg.pool_max_requests) == (300.0, 1800.0, 4, 50)
+        assert cfg.daemon_idle_timeout == 600.0 and cfg.daemon_dir is None
+        monkeypatch.setenv("SCRAPLING_BROWSER_POOL", "true")
+        monkeypatch.setenv("SCRAPLING_POOL_MAX_SESSIONS", "2")
+        monkeypatch.setenv("SCRAPLING_DAEMON_DIR", "/tmp/xyz")
+        monkeypatch.setenv("SCRAPLING_DAEMON_IDLE_TIMEOUT", "60")
+        init_config_from_env()
+        assert cfg.browser_pool is True and cfg.pool_max_sessions == 2
+        assert cfg.daemon_dir == Path("/tmp/xyz") and cfg.daemon_idle_timeout == 60.0
+    finally:
+        (cfg._browser_pool, cfg._pool_max_sessions,
+         cfg._daemon_dir, cfg._daemon_idle_timeout) = saved
 
 def test_pool_setter_validation():
     cfg = _fresh_config()
