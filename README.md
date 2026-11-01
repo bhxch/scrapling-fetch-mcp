@@ -25,11 +25,11 @@ This tool is optimized for low-volume retrieval of documentation and reference m
 uv tool install scrapling-fetch-mcp
 ```
 
-**Important**: on first startup the stealth browser (~1.2 GB) downloads **in the background** — the server starts listening immediately and `basic` mode works right away. The download resumes from where it stopped (HTTP Range) and retries automatically whenever the connection stalls; until it finishes, `stealth`/`max-stealth` requests fall back to basic (see below). Pre-install to skip that window entirely.
+**Important**: the stealth browser (~1.2 GB) downloads **in the background** the first time the daemon spins up (triggered by the first tool request — the MCP server itself is ready immediately and `basic` mode works right away). The download resumes from where it stopped (HTTP Range) and retries automatically whenever the connection stalls; until it finishes, `stealth`/`max-stealth` requests fall back to basic (see below). Pre-install to skip that window entirely.
 
 ### Stealth Mode Requirements
 
-`stealth` and `max-stealth` modes drive a modified Firefox ([camoufox](https://github.com/daijro/camoufox)) with browserforge fingerprint data. Both are **downloaded in the background on first startup**; until the browser is ready, stealth requests automatically degrade to `basic` and the tool result's `METADATA` carries a `degradation` note saying so. Pre-install to avoid the degraded window:
+`stealth` and `max-stealth` modes drive a modified Firefox ([camoufox](https://github.com/daijro/camoufox)) with browserforge fingerprint data. Both are **downloaded in the background when the daemon first spins up** (i.e. on the first tool request — the MCP server starts listening immediately); until the browser is ready, stealth requests automatically degrade to `basic` and the tool result's `METADATA` carries a `degradation` note saying so. Pre-install to avoid the degraded window:
 
 ```bash
 # camoufox Firefox (~1.2 GB, no resume on interrupted downloads)
@@ -37,7 +37,7 @@ uv tool install scrapling-fetch-mcp
 uvx --from scrapling-fetch-mcp camoufox fetch
 ```
 
-browserforge fingerprint data (~0.6 MB) is also auto-fetched on startup — from GitHub by default, falling back to the npm registry (`registry.npmjs.org`, then `registry.npmmirror.com`) when GitHub is unreachable.
+browserforge fingerprint data (~0.6 MB) is also auto-fetched when the daemon first spins up — from GitHub by default, falling back to the npm registry (`registry.npmjs.org`, then `registry.npmmirror.com`) when GitHub is unreachable.
 
 camoufox runs **headless** and does not need a desktop or Xvfb on a normal Linux server. If stealth launches fail with missing shared libraries, install the Firefox runtime OS packages once — this installs system packages via apt, not browsers (run as root): `uvx --from scrapling-fetch-mcp playwright install-deps firefox`. (`basic` mode needs none of the above at all — it uses curl-cffi with no browser.)
 
@@ -86,6 +86,7 @@ The AI decides which tool to use based on your request. You just ask naturally:
 |------|------|
 | 自动拉起 | 首个工具请求触发：前端确保同 (包版本，配置摘要) 的 daemon 恰好一个并等待就绪（并发拉起经 spawn.lock 仲裁，不会重复起进程） |
 | 空闲自退 | 全部客户端断开后空闲 600s（`SCRAPLING_DAEMON_IDLE_TIMEOUT` 可调）自动退出；退出前销毁池化浏览器、清理 socket/lock |
+| streamable-http 不触发空闲自退 | 该传输下前端进程长存即持久连接长存，daemon 始终有客户端，「空闲 600s 自退」不会触发——daemon 寿命 = 前端进程寿命；stdio 场景不受影响，仍按空闲超时自退 |
 | 死亡重生 | daemon 意外死亡时前端检测到断连，自动重拉后重试请求 |
 | 版本/配置隔离 | socket 名为 `daemon-<包版本>-<配置摘要8hex>`：升级或改抓取配置即换名，各自拉起、互不干扰 |
 | 过渡期共存 | 版本滚动（如 uvx 自动更新）期间新旧 daemon 短暂共存 2 个（约 +155 MB），旧 daemon 在一个空闲超时周期内自退消亡 |
