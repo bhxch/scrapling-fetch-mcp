@@ -173,7 +173,12 @@ class BackendClient:
     # ---------- 公共 API ----------
 
     def next_id(self) -> int:
-        """分配下一个请求 id（单调递增；调用方预分配以便取消命中同一请求）。"""
+        """分配下一个请求 id（单调递增、随机起点）。
+
+        由 ``call`` 内部为每次尝试自分配（每次尝试换新 id，防 daemon 侧孤儿
+        任务同 id 误配）；取消方经 :class:`ActiveCall` 句柄取当前生效 id，
+        **调用方无需预分配 id**。``cancel`` 的控制帧 id 亦复用本计数器。
+        """
         self._id_counter += 1
         return self._id_counter
 
@@ -302,8 +307,11 @@ class BackendClient:
                     break  # EOF:daemon 死亡/关闭连接
                 try:
                     frame = parse_frame(line)
-                except ProtocolError as exc:
-                    logger.warning("daemon 发来坏帧, 忽略: %s", exc)
+                except Exception as exc:  # noqa: BLE001  坏帧只忽略,绝不击穿读循环(同 worker)
+                    # 兜底承重：深嵌套 JSON 可令 json.loads 抛 RecursionError
+                    # （非 ProtocolError 子类），只接 ProtocolError 会把这类
+                    # 坏帧升级成连接级故障、误杀整条连接的在途请求
+                    logger.debug("daemon 发来坏帧, 忽略: %s", exc)
                     continue
                 self._dispatch(frame)
         finally:
@@ -355,7 +363,9 @@ class BackendClient:
     def _fail_pending(self, exc: Exception) -> None:
         for entry in self._pending.values():
             if not entry.future.done():
-                entry.future.set_exception(exc)
+                # 每个 future 独立异常实例：异常被 await 时会挂各等待方的
+                # traceback，共享同一实例会让彼此的堆栈互相污染
+                entry.future.set_exception(type(exc)(str(exc)))
         self._pending.clear()
 
     # ---------- 单请求事务 ----------
@@ -437,12 +447,14 @@ def make_adapter(op: str) -> Callable[..., Awaitable[str]]:
       cancel 帧 → re-raise（取消必须传播）。
     - ``BackendError`` 的 ``CONCURRENCY_LIMIT`` →
       ``RuntimeError("并发已达上限(全局),请稍后重试: ...")``；
-    其余 → ``RuntimeError(f"ERROR: {code}: {message}")``（MCP 框架把工具
+    - 其余 → ``RuntimeError(f"ERROR: {code}: {message}")``（MCP 框架把工具
       异常转 is_error 结果）。
     """
-    client = get_client()
 
     async def adapter(ctx: Context | None = None, **params: Any) -> str:
+        # 单例惰性解析到调用时刻：工厂时刻绑定会被单例重置（测试隔离/热
+        # 重载）甩开,adapter 永远拿当前生效的进程级实例
+        client = get_client()
         # 取消句柄：call 内部重试会换新 id，cancel 必须命中当前生效的请求 id
         # （预分配 id 在重试后已不对应任何在途任务）
         active = ActiveCall()

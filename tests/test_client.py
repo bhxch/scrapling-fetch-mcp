@@ -464,6 +464,34 @@ def test_get_client_singleton():
     assert isinstance(get_client(), BackendClient)
 
 
+@pytest.mark.asyncio
+async def test_make_adapter_binds_client_lazily(tmp_path, patch_ensure):
+    """adapter 在调用时刻才解析单例：工厂先建、单例后重置,仍走重置后的新实例。
+
+    工厂时刻绑定会 被 _reset_singleton 这类测试隔离/热重载甩开——旧实例
+    永不建连,连接全部落在当前生效的进程级单例上。
+    """
+
+    async def handler(frame: dict, send) -> None:
+        await send(make_response(frame["id"], {"result": "LAZY-OK"}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)
+    adapter = make_adapter("fetch_page")  # 先建工厂
+    stale = get_client()
+    client_mod._client_instance = None    # 后重置单例
+    try:
+        result = await asyncio.wait_for(adapter(None, url="u"), 5)
+        assert result == "LAZY-OK"
+        fresh = get_client()
+        assert fresh is not stale         # 适配器用的是重置后的新单例
+        assert stale._writer is None and stale._reader_task is None  # 旧实例从未建连
+    finally:
+        await get_client().aclose()
+        await d.kill()
+
+
 # ---------- 9. scraping_dir 前端归一化（C2 回归） ----------
 
 @pytest.mark.asyncio
