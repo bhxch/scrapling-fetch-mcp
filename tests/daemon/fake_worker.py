@@ -40,6 +40,7 @@ from scrapling_fetch_mcp.daemon.config_env import resolve_daemon_env
 from scrapling_fetch_mcp.daemon.lifecycle import socket_name
 from scrapling_fetch_mcp.daemon.paths import pkg_version
 from scrapling_fetch_mcp.daemon.protocol import (
+    E_BAD_FRAME,
     E_INTERNAL,
     E_UNKNOWN_OP,
     OP_PING,
@@ -114,7 +115,7 @@ def _serve_connection(conn: socket.socket, config_hash: str) -> None:
                 try:
                     resp = handle_frame(line, config_hash)
                 except ProtocolError as exc:
-                    resp = make_error(0, "bad_frame", str(exc))
+                    resp = make_error(0, E_BAD_FRAME, str(exc))
                 except Exception as exc:  # 兜底：不让单连接异常击穿服务
                     resp = make_error(0, E_INTERNAL, str(exc))
                 conn.sendall(resp)

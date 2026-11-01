@@ -40,6 +40,7 @@ from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapp
 from scrapling_fetch_mcp.daemon.config_env import resolve_daemon_env
 from scrapling_fetch_mcp.daemon.paths import pkg_version
 from scrapling_fetch_mcp.daemon.protocol import (
+    E_BAD_FRAME,
     E_CANCELLED,
     E_INTERNAL,
     E_UNAUTHORIZED,
@@ -80,9 +81,6 @@ _EXIT_TASK_GRACE = 2.0
 _CLOSE_ALL_GRACE = 5.0
 # 并发限流错误码（前端映射回限流文案）。
 CONCURRENCY_LIMIT_CODE = "CONCURRENCY_LIMIT"
-
-# 帧解析失败（ProtocolError）时的错误码；与 fake_worker 的应答约定一致。
-_BAD_FRAME_CODE = "bad_frame"
 
 
 def _wrapper_params(fn) -> tuple[frozenset[str], frozenset[str]]:
@@ -317,7 +315,7 @@ class DaemonWorker:
             frame = parse_frame(line)
             return await self._dispatch(frame, send)
         except ProtocolError as exc:
-            return make_error(0, _BAD_FRAME_CODE, str(exc))
+            return make_error(0, E_BAD_FRAME, str(exc))
         except Exception as exc:  # noqa: BLE001  见 docstring：兜底即本函数的存在理由
             logger.warning("帧处理异常, 按 internal 错误应答: %r", exc)
             return make_error(0, E_INTERNAL, f"帧处理失败: {exc}")

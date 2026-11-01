@@ -3,6 +3,7 @@
 import pytest
 
 from scrapling_fetch_mcp.daemon.protocol import (
+    E_BAD_FRAME,
     E_CANCELLED,
     E_INTERNAL,
     E_UNAUTHORIZED,
@@ -82,7 +83,7 @@ def test_constants():
     assert (OP_FETCH_PAGE, OP_FETCH_PATTERN, OP_CANCEL, OP_PING, OP_STATUS, OP_SHUTDOWN) == (
         "fetch_page", "fetch_pattern", "cancel", "ping", "status", "shutdown",
     )
-    assert (E_UNAUTHORIZED, E_UNKNOWN_OP, E_CANCELLED, E_INTERNAL) == (
-        "unauthorized", "unknown_op", "cancelled", "internal",
+    assert (E_BAD_FRAME, E_UNAUTHORIZED, E_UNKNOWN_OP, E_CANCELLED, E_INTERNAL) == (
+        "bad_frame", "unauthorized", "unknown_op", "cancelled", "internal",
     )
     assert issubclass(ProtocolError, ValueError)

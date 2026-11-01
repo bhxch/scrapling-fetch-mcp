@@ -23,6 +23,7 @@ import json
 from scrapling_fetch_mcp.daemon.config_env import PROTOCOL_VERSION
 
 __all__ = [
+    "E_BAD_FRAME",
     "E_INTERNAL",
     "E_CANCELLED",
     "E_UNAUTHORIZED",
@@ -51,6 +52,7 @@ OP_STATUS: str = "status"
 OP_SHUTDOWN: str = "shutdown"
 
 # 错误码常量（错误帧 error.code 取值）。
+E_BAD_FRAME: str = "bad_frame"
 E_UNAUTHORIZED: str = "unauthorized"
 E_UNKNOWN_OP: str = "unknown_op"
 E_CANCELLED: str = "cancelled"

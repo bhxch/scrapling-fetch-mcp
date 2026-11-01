@@ -21,6 +21,7 @@ import pytest
 from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
 from scrapling_fetch_mcp.daemon import worker as worker_mod
 from scrapling_fetch_mcp.daemon.protocol import (
+    E_BAD_FRAME,
     E_CANCELLED,
     E_INTERNAL,
     E_UNKNOWN_OP,
@@ -195,7 +196,7 @@ async def test_fetch_payload_validation_errors(tmp_path):
             # payload 非 dict 已被 parse_frame 的类型校验在协议层拒绝(bad_frame)
             resp = await c.request(OP_FETCH_PAGE, "not-a-dict", h.worker.token, 8)
             assert resp["ok"] is False
-            assert resp["error"]["code"] == "bad_frame"
+            assert resp["error"]["code"] == E_BAD_FRAME
             bad_cases = [
                 {k: v for k, v in PAGE_PAYLOAD.items() if k != "url"},  # 缺必填键
                 {**PAGE_PAYLOAD, "bogus_key": 1},  # 未知键
