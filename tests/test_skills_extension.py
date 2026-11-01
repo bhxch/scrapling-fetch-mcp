@@ -158,6 +158,7 @@ def test_build_mcp_factory_carries_instructions_and_extension():
         auth=AuthSettings(
             issuer_url="http://127.0.0.1:9000/",
             resource_server_url="http://127.0.0.1:9000/",
+            validate_token_resource=False,
         ),
     )
     # instructions 含 SKILL_URI,扩展被注册

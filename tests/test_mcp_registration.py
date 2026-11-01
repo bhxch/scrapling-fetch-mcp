@@ -148,6 +148,7 @@ class TestServerAuthConstruction:
             auth=AuthSettings(
                 issuer_url="http://127.0.0.1:8000/",
                 resource_server_url="http://127.0.0.1:8000/",
+                validate_token_resource=False,
             ),
         )
         assert server is not None

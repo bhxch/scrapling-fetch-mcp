@@ -292,6 +292,10 @@ def run_server():
             auth=AuthSettings(
                 issuer_url=f"http://{config.host}:{config.port}/",
                 resource_server_url=f"http://{config.host}:{config.port}/",
+                # 静态共享密钥 verifier 自身即校验 token,无 resource 绑定
+                # 概念;显式 False 消除 SDK 2.2+ 的 MCPDeprecationWarning,
+                # 并锁定与 2.x 相同的行为(3.0 将默认 True)。
+                validate_token_resource=False,
             ),
         )
 
