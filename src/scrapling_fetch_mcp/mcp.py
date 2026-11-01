@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 from argparse import ArgumentParser
@@ -18,7 +19,7 @@ from scrapling_fetch_mcp._features import (
 )
 from scrapling_fetch_mcp._skills import SKILL_URI, build_extension
 from scrapling_fetch_mcp._tool_factory import build_tool_function
-from scrapling_fetch_mcp.daemon.config_env import resolve_daemon_env
+from scrapling_fetch_mcp.daemon.config_env import DAEMON_OWNED_ENV_KEYS, resolve_daemon_env
 from scrapling_fetch_mcp.daemon.lifecycle import daemon_sockets, read_lock, socket_name, transact
 from scrapling_fetch_mcp.daemon.paths import daemon_dir
 from scrapling_fetch_mcp.daemon.protocol import OP_SHUTDOWN, OP_STATUS
@@ -182,6 +183,55 @@ def _daemon_main(argv: list[str]) -> int:
     return _daemon_shutdown(args)
 
 
+def _sync_daemon_env() -> None:
+    """把 daemon-owned 配置的生效值写回 os.environ（CLI 覆盖必须抵达 daemon）。
+
+    daemon 子进程按 ``(版本, 自算 config_hash)`` 命名 socket，spawn env 与
+    hash 都从 os.environ 归一化而来（``resolve_daemon_env`` 只读环境）。
+    CLI 覆盖只写 config 单例时不落回 env——hash 与 spawn env 双双漏改，
+    覆盖静默失效且前端/daemon 配置分叉（spec 反目标"配置不一致时静默"）。
+    故在 CLI 覆盖完成后、热身前，以 config 单例为真相源（env 为底、CLI
+    已覆盖其上）把全部生效值写回：路径键解析为绝对（daemon 以 cwd="/"
+    spawn，见 spec"相对路径前端归一化"）；布尔串化为 "true"/"false"
+    （config_env 两侧均按 true/1/yes、false/0/no 解析，canonical 对称）；
+    None/空串的键不写（与"未设置按未处理"的解析约定一致）。
+    features/transport/auth/daemon 生命周期键不归 daemon 所有，不写。
+    """
+    effective: dict[str, str] = {
+        "SCRAPLING_MIN_MODE": config.min_mode,
+        "SCRAPLING_CACHE_TTL": str(config.cache_ttl),
+        "SCRAPLING_CACHE_MAX_ENTRIES": str(config.cache_max_entries),
+        "SCRAPING_DIR": str(config.scraping_dir.expanduser().resolve()),
+        "SCRAPLING_MARKDOWN_CONVERTER": config.markdown_converter,
+        "SCRAPLING_DEFAULT_FORMAT": config.default_format,
+        "SCRAPLING_DISABLE_URL_REWRITE": "true" if config.disable_url_rewrite else "false",
+        "SCRAPLING_DISABLE_JINA_ARBITER":
+            "true" if config.jina_arbiter_disabled else "false",
+        "SCRAPLING_JINA_MIN_CHARS": str(config.jina_min_chars),
+        "SCRAPLING_MAX_CONCURRENT": str(config.max_concurrent),
+        "SCRAPLING_ACQUIRE_TIMEOUT": str(config.acquire_timeout),
+        "SCRAPLING_FETCH_TIMEOUT": str(config.fetch_timeout),
+        "SCRAPLING_BROWSER_POOL": "true" if config.browser_pool else "false",
+        "SCRAPLING_POOL_IDLE_TTL": str(config.pool_idle_ttl),
+        "SCRAPLING_POOL_MAX_AGE": str(config.pool_max_age),
+        "SCRAPLING_POOL_MAX_SESSIONS": str(config.pool_max_sessions),
+        "SCRAPLING_POOL_MAX_REQUESTS": str(config.pool_max_requests),
+    }
+    if config.rules_config_path is not None:
+        effective["SCRAPLING_RULES_CONFIG"] = str(
+            Path(config.rules_config_path).expanduser().resolve()
+        )
+    if config.url_rewrite_config_path is not None:
+        effective["SCRAPLING_URL_REWRITE_CONFIG"] = str(
+            Path(config.url_rewrite_config_path).expanduser().resolve()
+        )
+    if config.jina_api_key:
+        effective["JINA_API_KEY"] = config.jina_api_key
+    unexpected = set(effective) - set(DAEMON_OWNED_ENV_KEYS)
+    assert not unexpected, f"daemon-owned 键表与写回表漂移: {sorted(unexpected)}"
+    os.environ.update(effective)
+
+
 def run_server():
     """Parse CLI arguments and start the MCP server"""
     # `daemon` 管理子命令分流：在 MCP 参数解析前拦截，处理完即退出，MCP 路径零改动
@@ -202,7 +252,7 @@ def run_server():
     parser.add_argument(
         "--cache-ttl",
         type=int,
-        default=300,
+        default=None,
         help="Cache time-to-live in seconds for fetched pages. "
         "When fetching large pages in segments, this prevents repeated requests to the same URL. "
         "Set to 0 to disable caching. Default: 300 (5 minutes). "
@@ -211,7 +261,7 @@ def run_server():
     parser.add_argument(
         "--scraping-dir",
         type=str,
-        default=".temp/scrapling/",
+        default=None,
         help="Default directory for saving scraped content (HTML + images). "
         "Can be overridden per-request with scraping_dir parameter. "
         "Default: .temp/scrapling/ "
@@ -220,7 +270,7 @@ def run_server():
     parser.add_argument(
         "--markdown-converter",
         choices=["markitdown", "markdownify"],
-        default="markitdown",
+        default=None,
         help="Markdown converter library to use. Default: markitdown. "
         "Can also be set via SCRAPLING_MARKDOWN_CONVERTER environment variable.",
     )
@@ -235,7 +285,7 @@ def run_server():
     parser.add_argument(
         "--default-format",
         choices=["airead", "markdown", "html"],
-        default="markdown",
+        default=None,
         help="Default output format for fetch operations. "
         "s_fetch_page supports: airead, markdown, html. "
         "s_fetch_pattern will use markdown if default is airead. "
@@ -448,6 +498,11 @@ def run_server():
     # daemon-owned 配置热身：归一化 + 摘要在启动时先算一遍（无 IO、不拉起
     # daemon），尽早暴露配置问题。daemon 拉起与浏览器准备全部移入 daemon
     # 侧 worker（__main__.py），前端不再 import _browser_check。
+    #
+    # 热身前先把生效配置（env 为底、CLI 覆盖其上）写回 os.environ——
+    # resolve_daemon_env 只读环境，不写回则 CLI 覆盖到不了 daemon 的
+    # hash 与 spawn env，覆盖静默失效（0.2.x 回归，见 _sync_daemon_env）。
+    _sync_daemon_env()
     resolve_daemon_env()
 
     # When auth is enabled, (re)build the MCPServer with a token verifier.
