@@ -146,7 +146,13 @@ def _daemon_shutdown(args) -> int:
         if not socks:
             print("无存活 daemon")
             return 0
-        return 0 if all(_shutdown_socket(sock) for sock in socks) else 1
+        # 显式循环处理全部 socket：all(生成器) 会短路，首个失败即放弃其余
+        # daemon，清场只做一半还报成功过的错误清单。
+        failed = [sock.name for sock in socks if not _shutdown_socket(sock)]
+        if failed:
+            print(f"以下 daemon 停止失败: {', '.join(failed)}", file=sys.stderr)
+            return 1
+        return 0
     if args.socket:
         name = args.socket.removesuffix(".sock")
         sock = daemon_dir() / f"{name}.sock"

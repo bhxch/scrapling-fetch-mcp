@@ -83,6 +83,44 @@ async def serve_named_worker(d, config_hash, *, idle_timeout=30.0):
         await asyncio.gather(task, return_exceptions=True)
 
 
+@asynccontextmanager
+async def serve_stuck_ok_daemon(sock):
+    """假 daemon：对任何请求回成功帧，但 sock 永不消失、绝不退出。
+
+    shutdown 请求也回 ok:true → `_shutdown_socket` 走"已接受但等 sock 消失
+    超时"的失败路径（配合把 `_SHUTDOWN_EXIT_WAIT` 调小）。
+    """
+
+    async def handle(reader, writer):
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                frame = json.loads(line)
+                writer.write(
+                    json.dumps(
+                        {"v": 2, "id": frame.get("id"), "ok": True, "result": {}}
+                    ).encode() + b"\n"
+                )
+                await writer.drain()
+        except (ConnectionError, json.JSONDecodeError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+
+    server = await asyncio.start_unix_server(handle, str(sock))
+    try:
+        yield server
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 # ---------- status ----------
 
 @pytest.mark.asyncio
@@ -174,6 +212,38 @@ async def test_shutdown_all_cleans_residue_and_stops_alive(daemon_env):
         await asyncio.wait_for(hnd.task, 2.0)
     assert not hnd.sock.exists()
     assert not residue.exists()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_all_does_not_short_circuit_on_failure(daemon_env, monkeypatch, capsys):
+    """--all 不短路：首个 daemon 停止失败后，其余 socket 仍被逐个处理。
+
+    假 daemon（0.0.0 版本名排序在前）应答 shutdown 成功帧但 sock 永不消失
+    → 超时失败；排在后面的真 worker 必须仍被正常停止。
+    """
+    monkeypatch.setattr(mcp_mod, "_SHUTDOWN_EXIT_WAIT", 0.3)
+    stuck = daemon_env / "daemon-0.0.0-aaaa0000.sock"
+    stuck.with_suffix(".lock").write_text(
+        json.dumps(
+            {
+                "pid": 999999999,
+                "token": "tok",
+                "pkg": "0.0.0",
+                "config_hash": "aaaa0000",
+                "sock": str(stuck),
+            }
+        ),
+        encoding="utf-8",
+    )
+    h = current_hash()
+    async with serve_stuck_ok_daemon(stuck):
+        async with serve_named_worker(daemon_env, h) as hnd:
+            rc = await asyncio.to_thread(mcp_mod._daemon_main, ["shutdown", "--all"])
+            assert rc == 1
+            await asyncio.wait_for(hnd.task, 2.0)  # 后面的真 daemon 仍被处理
+    out = capsys.readouterr()
+    assert stuck.name in out.err  # 失败清单
+    assert not hnd.sock.exists()
 
 
 # ---------- run_server argv 分流 ----------
