@@ -19,6 +19,8 @@ HEAVY = (
     "onnxruntime",
     "playwright",
     "camoufox",
+    "lxml",
+    "bs4",
     "scrapling.fetchers",
     "scrapling_fetch_mcp._fetcher",
     "scrapling_fetch_mcp._scrapling",
@@ -30,6 +32,7 @@ def test_frontend_import_stays_thin():
     code = (
         "import sys; import scrapling_fetch_mcp.mcp; "
         "bad=[m for m in %r for k in sys.modules if k == m or k.startswith(m + '.')]; "
+        "bad=list(dict.fromkeys(bad)); "  # 每个重模块只报一次,保序
         "raise SystemExit('heavy: ' + ','.join(bad) if bad else 0)"
     ) % (HEAVY,)
     r = subprocess.run(

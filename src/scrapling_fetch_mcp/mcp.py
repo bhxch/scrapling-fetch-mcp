@@ -322,7 +322,9 @@ def _sync_daemon_env() -> None:
     if config.jina_api_key:
         effective["JINA_API_KEY"] = config.jina_api_key
     unexpected = set(effective) - set(DAEMON_OWNED_ENV_KEYS)
-    assert not unexpected, f"daemon-owned 键表与写回表漂移: {sorted(unexpected)}"
+    if unexpected:
+        # 显式 raise 而非 assert:python -O 会剥离 assert,护栏失效
+        raise RuntimeError(f"daemon-owned 键表与写回表漂移: {sorted(unexpected)}")
     os.environ.update(effective)
 
 
