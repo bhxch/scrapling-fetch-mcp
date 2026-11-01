@@ -261,6 +261,23 @@ def test_cache_max_entries_env(monkeypatch):
     init_config_from_env()
     assert cfg.cache_max_entries == 16
 
+class TestUrlRewriteEnvConfig:
+    """SCRAPLING_DISABLE_URL_REWRITE 的 env 解析"""
+
+    def test_uppercase_true_enables(self, monkeypatch):
+        """大写 "TRUE" 变体生效（解析统一 .lower()，与 SCRAPLING_BROWSER_POOL 等键一致）"""
+        monkeypatch.setattr(config, "_disable_url_rewrite", False)
+        monkeypatch.setenv("SCRAPLING_DISABLE_URL_REWRITE", "TRUE")
+        init_config_from_env()
+        assert config.disable_url_rewrite is True
+
+    def test_false_values_leave_default(self, monkeypatch):
+        monkeypatch.setattr(config, "_disable_url_rewrite", False)
+        monkeypatch.setenv("SCRAPLING_DISABLE_URL_REWRITE", "no")
+        init_config_from_env()
+        assert config.disable_url_rewrite is False
+
+
 def test_pool_and_daemon_defaults_and_env(monkeypatch):
     # browser_pool 等字段自 Task 11 起被 _do_browse/worker status 运行期消费,
     # 单例泄漏会改变后续测试行为——测试结束必须还原(文件惯例的单例手法
