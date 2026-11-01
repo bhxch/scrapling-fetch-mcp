@@ -15,7 +15,9 @@ response/error/progress 帧分发回等待者：
 - **看门狗**：单请求限时 ``acquire_timeout + fetch_timeout + 60s``，超时
   发 cancel 帧后抛 ``BackendError("DAEMON_TIMEOUT", ...)``。
 - **取消**：``call`` 的调用方任务被取消时由 :func:`make_adapter` 负责
-  发 cancel 帧再 re-raise（取消必须继续传播）。
+  发 cancel 帧再 re-raise（取消必须继续传播）。重试每次尝试换新请求 id，
+  adapter 经 :class:`ActiveCall` 句柄取「当前生效 id」发 cancel——预分配
+  的初始 id 在重试后已不对应任何在途任务。
 
 Import 边界约束：本模块在前端 import 白名单上——仅 stdlib、
 ``daemon.protocol``/``daemon.lifecycle``/``daemon.config_env``/
@@ -30,6 +32,7 @@ import asyncio
 import inspect
 import json
 import logging
+import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,6 +51,7 @@ if TYPE_CHECKING:  # 纯类型标注，运行时不牵入
     from mcp.server.mcpserver.context import Context
 
 __all__ = [
+    "ActiveCall",
     "BackendClient",
     "BackendError",
     "get_client",
@@ -110,6 +114,20 @@ class _Pending:
         self.progress_tasks: set[asyncio.Task] = set()
 
 
+class ActiveCall:
+    """一次 ``call`` 的取消句柄：记录当前生效（最近一次尝试）的请求 id。
+
+    连接级故障重试时每次尝试换新 id（防 daemon 存活时孤儿任务与新请求同 id
+    互相覆盖/误配）；取消方（adapter）经 ``handle.req_id`` 取当前生效 id 发
+    cancel 帧，而非预分配的初始 id——后者在重试后已不对应任何在途任务。
+    """
+
+    __slots__ = ("req_id",)
+
+    def __init__(self) -> None:
+        self.req_id: int | None = None
+
+
 def _read_lock_token(sock: Path) -> str:
     """从 daemon socket 同名 ``.lock`` 读鉴权 token（lifecycle 约定的 JSON）。
 
@@ -140,7 +158,9 @@ class BackendClient:
         self._connect_lock = asyncio.Lock()  # 串行化首连/重连,防并发重复拉起 daemon
         self._send_lock = asyncio.Lock()  # 单写者纪律:同一时刻仅一个协程写 socket
         self._pending: dict[int, _Pending] = {}
-        self._id_counter = 0
+        # id 起点随机化：daemon 独立于 client 进程存活，client 重启后从 0 起
+        # 编号可能与 daemon 残留孤儿任务同 id（同类误配），随机起点使其概率可忽略
+        self._id_counter = secrets.randbelow(1 << 30)
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._reader_task: asyncio.Task | None = None
@@ -158,25 +178,37 @@ class BackendClient:
         return self._id_counter
 
     async def call(self, op: str, payload: dict, ctx: Context | None = None, *,
-                   req_id: int | None = None) -> dict:
+                   req_id: int | None = None, active: ActiveCall | None = None) -> dict:
         """向 daemon 发起一次调用，返回响应帧的 ``result`` 值。
 
         - error 帧 → ``BackendError(code, message)``（不重试）。
         - 连接级故障/拉起失败 → 丢连重拉，最多重试 ``_MAX_RETRIES`` 次，
           仍失败抛 ``BackendError("DAEMON_UNAVAILABLE", 排查指引)``。
         - 看门狗超时 → 发 cancel 帧，抛 ``BackendError("DAEMON_TIMEOUT", ...)``。
-        - ``req_id``：调用方（adapter）预分配的请求 id；缺省自分配。传预
-          分配 id 是为了让取消帧能命中本请求。
+        - ``req_id``：**首次尝试**的请求 id（可选项，缺省自分配）。
+        - ``active``：取消句柄（可选项）。每次重试换新 id——daemon 不因客户
+          端断连清理任务表，同 id 重放会覆盖孤儿任务注册、其迟到响应帧还会
+          按同 id 误配新请求；句柄的 ``req_id`` 随之更新为当前生效 id，供
+          取消方（adapter）命中在途请求。
         """
         last: Exception | None = None
+        rid = self.next_id() if req_id is None else req_id  # 首尝试 id
+        if active is not None:
+            active.req_id = rid
         for _attempt in range(_MAX_RETRIES + 1):
             try:
                 await self._ensure_connected()
-                return await self._transact(op, payload, ctx, req_id)
+                return await self._transact(op, payload, ctx, rid)
             except (_ConnectionLost, OSError, TimeoutError) as exc:
                 # BackendError/CancelledError 不在此列：前者不重试,后者必须传播
                 last = exc
                 await self._drop_connection()
+                # 重试换新 id：daemon 存活时旧尝试可能成为孤儿任务仍挂在其
+                # _tasks 表（断连不清表），同 id 重放会覆盖注册且孤儿迟到的
+                # 响应帧按同 id 命中新 future——换新 id 双向消除（评审 Important）
+                rid = self.next_id()
+                if active is not None:
+                    active.req_id = rid
         raise BackendError(CODE_UNAVAILABLE, _UNAVAILABLE_GUIDANCE.format(detail=last)) from last
 
     async def cancel(self, req_id: int) -> None:
@@ -380,7 +412,8 @@ def get_client() -> BackendClient:
 def make_adapter(op: str) -> Callable[..., Awaitable[str]]:
     """生成 MCP 工具形态的异步函数 ``(ctx=None, **params) -> str``。
 
-    - 客户端取消 → 短超时尽力发 cancel 帧 → re-raise（取消必须传播）。
+    - 客户端取消 → 经 :class:`ActiveCall` 句柄取当前生效 id、短超时尽力发
+      cancel 帧 → re-raise（取消必须传播）。
     - ``BackendError`` 的 ``CONCURRENCY_LIMIT`` →
       ``RuntimeError("并发已达上限(全局),请稍后重试: ...")``；
       其余 → ``RuntimeError(f"ERROR: {code}: {message}")``（MCP 框架把工具
@@ -389,15 +422,17 @@ def make_adapter(op: str) -> Callable[..., Awaitable[str]]:
     client = get_client()
 
     async def adapter(ctx: Context | None = None, **params: Any) -> str:
-        # 预分配 id 并显式传给 call：cancel 必须命中 call 内部实际使用的请求 id
-        req_id = client.next_id()
+        # 取消句柄：call 内部重试会换新 id，cancel 必须命中当前生效的请求 id
+        # （预分配 id 在重试后已不对应任何在途任务）
+        active = ActiveCall()
         try:
-            resp = await client.call(op, params, ctx, req_id=req_id)
+            resp = await client.call(op, params, ctx, active=active)
         except asyncio.CancelledError:
-            try:
-                await asyncio.wait_for(client.cancel(req_id), _CANCEL_TIMEOUT)
-            except Exception:  # noqa: BLE001  收尾尽力而为,绝不拦取消传播
-                logger.debug("取消收尾: cancel 帧未送达", exc_info=True)
+            if active.req_id is not None:
+                try:
+                    await asyncio.wait_for(client.cancel(active.req_id), _CANCEL_TIMEOUT)
+                except Exception:  # noqa: BLE001  收尾尽力而为,绝不拦取消传播
+                    logger.debug("取消收尾: cancel 帧未送达", exc_info=True)
             raise
         except BackendError as exc:
             if exc.code == CODE_CONCURRENCY_LIMIT:

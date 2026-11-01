@@ -50,6 +50,7 @@ class FakeDaemon:
         self.received: list[dict] = []
         self._server: asyncio.AbstractServer | None = None
         self._tasks: set[asyncio.Task] = set()
+        self._writers: set[asyncio.StreamWriter] = set()
 
     async def start(self) -> None:
         self.sock.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +81,7 @@ class FakeDaemon:
         task = asyncio.current_task()
         assert task is not None
         self._tasks.add(task)
+        self._writers.add(writer)
         try:
             while True:
                 line = await reader.readline()
@@ -99,6 +101,7 @@ class FakeDaemon:
             pass
         finally:
             self._tasks.discard(task)
+            self._writers.discard(writer)
             writer.close()
             try:
                 await writer.wait_closed()
@@ -110,6 +113,11 @@ class FakeDaemon:
             await self.handler(frame, send)
         except (ConnectionError, OSError):
             pass  # 连接被 kill/对端断开时在途 handler 的写失败属正常终点
+
+    def abort_connections(self) -> None:
+        """掐断当前全部连接但不停止服务（模拟 daemon 存活时的连接级故障）。"""
+        for w in list(self._writers):
+            w.transport.abort()
 
     async def kill(self) -> None:
         """模拟 daemon 被杀：停 accept、取消全部连接任务（客户端看到 EOF）。
@@ -251,6 +259,49 @@ async def test_retry_after_daemon_kill(tmp_path, patch_ensure):
     finally:
         await c.aclose()
         await d2.kill()
+
+
+@pytest.mark.asyncio
+async def test_adapter_retry_after_connection_loss_uses_new_id(tmp_path, patch_ensure):
+    """评审 Important 回归钉：daemon 存活但连接级故障 → 重试必须换新请求 id。
+
+    daemon 不因客户端断连清理 _tasks：同 id 重放会让新任务覆盖孤儿注册，
+    且孤儿迟到的响应帧按同 id 命中新 future（旧结果误配新请求）。换新 id
+    双向消除。测试同时验证孤儿 id 的迟到帧被安全忽略、连接仍然可用。
+    """
+    killed = {"done": False}
+    first_id: list[int] = []
+
+    async def handler(frame: dict, send) -> None:
+        if frame["op"] == "fetch_page":
+            if not killed["done"]:
+                killed["done"] = True
+                first_id.append(frame["id"])
+                d.abort_connections()  # 不回帧直接掐断:客户端按连接级故障重试
+                return
+            await send(make_response(frame["id"], {"result": "SECOND"}))
+            # 模拟孤儿任务迟到完成：向首个 id 补发响应帧（新实现下无 pending,忽略）
+            if first_id[0] != frame["id"]:
+                await asyncio.sleep(0.05)
+                await send(make_response(first_id[0], {"result": "ORPHAN-LATE"}))
+        else:
+            await send(make_response(frame["id"], {"status": "ready"}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)  # daemon 存活:两次尝试指向同一 daemon
+    adapter = make_adapter("fetch_page")
+    try:
+        result = await asyncio.wait_for(adapter(None, url="u"), 5)
+        assert result == "SECOND"  # 孤儿迟到帧未误配（仍是第二次尝试的结果）
+        fetches = [f for f in d.received if f["op"] == "fetch_page"]
+        assert len(fetches) == 2
+        assert fetches[1]["id"] != fetches[0]["id"]  # 重试换新 id（本回归的承重断言）
+        # 连接仍可用
+        assert (await asyncio.wait_for(get_client().call("ping", {}, None), 5))["status"] == "ready"
+    finally:
+        await get_client().aclose()
+        await d.kill()
 
 
 # ---------- 3. DAEMON_UNAVAILABLE ----------
