@@ -277,7 +277,8 @@ class TestBrowserPoolRouting:
 
 
 class TestGetPoolSingleton:
-    """get_pool 惰性单例:参数取自 config,二次调用同一实例"""
+    """get_pool 惰性单例:参数取自 config,二次调用同一实例;pool_if_built
+    只读探测绝不构造"""
 
     def setup_method(self):
         scrapling_mod._pool = None
@@ -297,6 +298,13 @@ class TestGetPoolSingleton:
             assert stats["sessions"] == 0 and stats["hits"] == 0
         finally:
             scrapling_mod._pool = None
+
+    def test_pool_if_built_never_constructs(self):
+        """未构造返回 None;已构造原样返回,全程不触发惰性构造。"""
+        assert scrapling_mod.pool_if_built() is None
+        sentinel = object()
+        scrapling_mod._pool = sentinel
+        assert scrapling_mod.pool_if_built() is sentinel
 
 
 class TestBrowserCancelGuard:

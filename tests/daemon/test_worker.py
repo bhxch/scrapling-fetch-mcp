@@ -506,7 +506,7 @@ async def test_status_reports_snapshot(tmp_path):
 
 @pytest.mark.asyncio
 async def test_status_pool_stats_when_browser_pool_enabled(tmp_path, monkeypatch):
-    """browser_pool 开启时 status 的 pool 字段接真实 stats()"""
+    """browser_pool 开启且池已构造时 status 的 pool 字段接真实 stats()"""
     from scrapling_fetch_mcp import _scrapling
     from scrapling_fetch_mcp._config import config
 
@@ -516,7 +516,7 @@ async def test_status_pool_stats_when_browser_pool_enabled(tmp_path, monkeypatch
         def stats(self):
             return fake_stats
 
-    monkeypatch.setattr(_scrapling, "get_pool", lambda: FakePool())
+    monkeypatch.setattr(_scrapling, "pool_if_built", lambda: FakePool())
     original = config.browser_pool
     config.set_browser_pool(True)
     try:
@@ -527,6 +527,33 @@ async def test_status_pool_stats_when_browser_pool_enabled(tmp_path, monkeypatch
         config.set_browser_pool(original)
     assert resp["ok"] is True
     assert resp["result"]["pool"] == fake_stats
+
+
+@pytest.mark.asyncio
+async def test_status_does_not_construct_pool(tmp_path, monkeypatch):
+    """browser_pool 开启但池从未用过:status 报 None,绝不惰性构造空池。
+
+    空池 stats 会把"未启用"伪装成"已启用无会话";只读探测经 pool_if_built,
+    get_pool 一旦被调用即失败。
+    """
+    from scrapling_fetch_mcp import _scrapling
+    from scrapling_fetch_mcp._config import config
+
+    def fail_get_pool():
+        raise AssertionError("status 不得经 get_pool 惰性构造池")
+
+    monkeypatch.setattr(_scrapling, "get_pool", fail_get_pool)
+    monkeypatch.setattr(_scrapling, "_pool", None)
+    original = config.browser_pool
+    config.set_browser_pool(True)
+    try:
+        async with serve_worker(tmp_path) as h:
+            async with Client(h.sock) as c:
+                resp = await c.request(OP_STATUS, {}, h.worker.token, 1)
+    finally:
+        config.set_browser_pool(original)
+    assert resp["ok"] is True
+    assert resp["result"]["pool"] is None
 
 
 @pytest.mark.asyncio

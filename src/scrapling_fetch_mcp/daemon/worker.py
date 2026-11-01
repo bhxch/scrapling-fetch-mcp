@@ -260,11 +260,12 @@ class DaemonWorker:
                 task.cancel()  # 未决 cancel op 的宽限等待一并打断
             await asyncio.wait(list(self._cancel_tasks), timeout=_EXIT_TASK_GRACE)
         # 浏览器池收口（spec §6.2：daemon 退出不留池化浏览器）。放在任务
-        # 收尾之后——无在飞 fetch 时 close_all 才安全。仅当池已惰性构造过
-        # 才关（默认关时 _pool 为 None，零开销）。限时宽限：Firefox close
-        # 挂死会让无时限的 await 永不返回，daemon 泄漏、lock/sock 永不删；
-        # 超时转 _kill_spawned_browsers SIGKILL 全部浏览器后代后照常清理。
-        pool = getattr(_scrapling, "_pool", None)
+        # 收尾之后——无在飞 fetch 时 close_all 才安全。仅当池已构造过才关
+        # （pool_if_built 绝不惰性构造，默认关/从未抓取时为 None，零开销）。
+        # 限时宽限：Firefox close 挂死会让无时限的 await 永不返回，daemon
+        # 泄漏、lock/sock 永不删；超时转 _kill_spawned_browsers SIGKILL 全部
+        # 浏览器后代后照常清理。
+        pool = _scrapling.pool_if_built()
         if pool is not None:
             try:
                 await asyncio.wait_for(pool.close_all(), _CLOSE_ALL_GRACE)
@@ -398,9 +399,10 @@ class DaemonWorker:
 
     def _status_result(self, *, exclude_self: bool = False) -> dict:
         _effective_mode, degradation = resolve_stealth_degradation("stealth")
-        # 浏览器池统计：默认关（None）；开启时惰性构造空池 harmless——
-        # 只有 fetch 才拉浏览器，stats 报零值即"池已启用尚无会话"
-        pool_stats = _scrapling.get_pool().stats() if config.browser_pool else None
+        # 浏览器池统计：只在池确实构造过（有 fetch 走过池）时披露 stats；
+        # 经 pool_if_built 只读探测，首个 status 绝不凭空惰性构造空池
+        pool = _scrapling.pool_if_built()
+        pool_stats = pool.stats() if (config.browser_pool and pool is not None) else None
         return {
             **self._identity(exclude_self=exclude_self),
             # PageCache 未暴露公开 size；暂以内部 _cache 计数披露
