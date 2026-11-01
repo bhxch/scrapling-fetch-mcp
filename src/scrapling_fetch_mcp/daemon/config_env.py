@@ -8,10 +8,15 @@ sha256 前 8 hex 构成，用于 daemon socket 命名隔离
 CWD 相关差异（相对路径）都必须体现在 hash 里，绝不静默抹平。
 
 Import 边界约束：本模块在前端 import 白名单上，只允许 stdlib
-（hashlib/json/pathlib/os），禁止 import 重依赖（trafilatura/markitdown/
+（hashlib/json/math/pathlib/os），禁止 import 重依赖（trafilatura/markitdown/
 numpy/playwright/...）及本项目内会引入它们的模块（含 ``_config``）。
 键的归一化容错与 ``init_config_from_env`` 保持一致：解析失败的键按未
-设置处理（不进 spawn_env，也不进 hash）。
+设置处理（不进 spawn_env，也不进 hash）。等价于默认值的显式取值同样
+按未设置处理——布尔键解析为 False 时（三个布尔键默认全 False）不入
+spawn_env 与 hash，显式 "false"/"0"/"no" 与未设置同 hash，不因此多起
+一个 daemon；字符串键先 ``strip()``（``" stealth "`` 与 ``"stealth"``
+同 hash）；float 键解析出 nan/inf 按"解析失败=未设置"处理（非法超时
+不应改变 daemon 身份）。
 
 传输/server 键（SCRAPLING_TRANSPORT/HOST/PORT/MCP_PATH/AUTH_TOKEN）、
 features 键（SCRAPLING_DISABLE_FEATURES/ENABLE_FEATURES）与生命周期键
@@ -23,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 
@@ -132,9 +138,11 @@ def _parse_value(key: str, raw: str) -> str | int | float | bool | None:
             return None
     if key in _FLOAT_KEYS:
         try:
-            return float(raw)
+            value = float(raw)
         except ValueError:
             return None
+        # nan/inf 是 float() 的合法产物但对超时/TTL 毫无意义：按解析失败处理
+        return value if math.isfinite(value) else None
     if key in _BOOL_KEYS:
         lowered = raw.lower()
         if lowered in _TRUE_VALUES:
@@ -143,16 +151,18 @@ def _parse_value(key: str, raw: str) -> str | int | float | bool | None:
             return False
         return None
     if key in _LOWER_KEYS:
-        return raw.lower()
-    return raw
+        return raw.strip().lower()
+    # 其余（JINA_API_KEY）：字符串键统一 strip——首尾空白从来不是键值语义，
+    # 且 daemon 侧 init_config_from_env 不 strip，spawn_env 必须带归一化值
+    return raw.strip()
 
 
 def _collect_daemon_values() -> tuple[dict[str, str], dict[str, str | int | float | bool]]:
     """单趟扫描环境变量，返回 (spawn_env, canonical_values)。
 
     两者由同一解析结果生成，保证 daemon 侧从 spawn_env 重新归一化必然
-    得到相同 canonical dict（同配置 ⇒ 同 hash）。未设置/空串/解析失败的
-    键两边都不出现（由 daemon 侧默认值兜底）。
+    得到相同 canonical dict（同配置 ⇒ 同 hash）。未设置/空串/解析失败/
+    等于默认值（布尔键 False）的键两边都不出现（由 daemon 侧默认值兜底）。
     """
     spawn_env: dict[str, str] = {}
     canonical: dict[str, str | int | float | bool] = {}
@@ -163,10 +173,13 @@ def _collect_daemon_values() -> tuple[dict[str, str], dict[str, str | int | floa
         parsed = _parse_value(key, raw)
         if parsed is None:
             continue
+        if key in _BOOL_KEYS and parsed is False:
+            continue  # 等于默认值：显式 "false" 与未设置同 hash,不换 daemon 身份
         canonical[key] = parsed
-        # spawn_env 保真转发原始字符串（daemon 侧按同样规则解析）；
-        # 仅路径键替换为归一化后的绝对路径。
-        spawn_env[key] = parsed if key in _PATH_KEYS else raw
+        # spawn_env 保真转发原始字符串（daemon 侧按同样规则解析）；路径键与
+        # 字符串键替换为归一化值（前者转绝对路径,后者 strip 后 daemon 侧
+        # init_config_from_env 不再 strip,必须传归一化串才能解析到同值）。
+        spawn_env[key] = parsed if isinstance(parsed, str) else raw
     return spawn_env, canonical
 
 

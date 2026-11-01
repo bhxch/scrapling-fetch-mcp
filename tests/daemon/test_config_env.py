@@ -34,3 +34,36 @@ def test_defaults_when_env_empty(monkeypatch):
     env, h = resolve_daemon_env()
     assert env.get("SCRAPLING_MIN_MODE") is None      # 未设置不进 env,由 daemon 侧默认值兜底
     assert len(h) == 8
+
+def test_bool_false_equals_unset(monkeypatch):
+    """显式 "false" 与未设置同 hash：等于默认值的布尔键不进 hash 输入与 spawn_env。"""
+    monkeypatch.delenv("SCRAPLING_BROWSER_POOL", raising=False)
+    _, h_unset = resolve_daemon_env()
+    monkeypatch.setenv("SCRAPLING_BROWSER_POOL", "false")
+    env, h_false = resolve_daemon_env()
+    assert h_false == h_unset                 # 不因显式默认值多起一个 daemon
+    assert "SCRAPLING_BROWSER_POOL" not in env  # spawn_env 与 hash 同源:两边都不出现
+    monkeypatch.setenv("SCRAPLING_BROWSER_POOL", "TRUE")
+    _, h_true = resolve_daemon_env()
+    assert h_true != h_unset                  # True 仍改变身份
+
+def test_string_values_stripped(monkeypatch):
+    """字符串值先 strip 再入 hash 与 spawn_env：" stealth " 与 "stealth" 同 hash。"""
+    monkeypatch.setenv("SCRAPLING_MIN_MODE", "  stealth  ")
+    env, h_padded = resolve_daemon_env()
+    assert env["SCRAPLING_MIN_MODE"] == "stealth"  # spawn_env 带归一化串(daemon 侧不再 strip)
+    monkeypatch.setenv("SCRAPLING_MIN_MODE", "stealth")
+    _, h_clean = resolve_daemon_env()
+    assert h_padded == h_clean
+
+def test_nonfinite_float_treated_as_unset(monkeypatch):
+    """float 解析出 nan/inf 按解析失败=未设置处理：不改变 daemon 身份。"""
+    monkeypatch.delenv("SCRAPLING_ACQUIRE_TIMEOUT", raising=False)
+    _, h_unset = resolve_daemon_env()
+    monkeypatch.setenv("SCRAPLING_ACQUIRE_TIMEOUT", "nan")
+    env, h_nan = resolve_daemon_env()
+    assert h_nan == h_unset and "SCRAPLING_ACQUIRE_TIMEOUT" not in env
+    monkeypatch.setenv("SCRAPLING_ACQUIRE_TIMEOUT", "inf")
+    _, h_inf = resolve_daemon_env()
+    assert h_inf == h_unset
+

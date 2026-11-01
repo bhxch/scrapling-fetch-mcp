@@ -102,7 +102,11 @@ def test_unset_optional_keys_not_written(clean_daemon_env):
 
 
 def test_boolean_stringification_symmetric_with_daemon_side(clean_daemon_env):
-    """"true"/"false" 串化与 config_env 解析对称：canonical 值一致。"""
+    """"true"/"false" 串化与 config_env 解析对称：canonical 值一致。
+
+    等于默认值（False）的布尔键按"未设置"处理、不入 canonical（config_env
+    归一化语义：显式默认值与未设置同 hash，不因此多起一个 daemon）。
+    """
     from scrapling_fetch_mcp.mcp import _sync_daemon_env
 
     cfg = clean_daemon_env
@@ -112,7 +116,7 @@ def test_boolean_stringification_symmetric_with_daemon_side(clean_daemon_env):
     canon = normalize_daemon_values()
     assert canon["SCRAPLING_BROWSER_POOL"] is True
     assert canon["SCRAPLING_DISABLE_URL_REWRITE"] is True
-    assert canon["SCRAPLING_DISABLE_JINA_ARBITER"] is False  # 默认关也入 canonical
+    assert "SCRAPLING_DISABLE_JINA_ARBITER" not in canon  # 默认关=False 不入 hash 输入
 
 
 def test_all_owned_keys_covered(clean_daemon_env):
