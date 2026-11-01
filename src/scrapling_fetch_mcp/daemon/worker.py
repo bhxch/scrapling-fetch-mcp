@@ -313,7 +313,7 @@ class DaemonWorker:
         if op == OP_STATUS:
             return make_response(req_id, self._status_result())
         if op == OP_CANCEL:
-            return await self._handle_cancel(req_id, payload)
+            return await self._handle_cancel(req_id, payload, send)
         if op == OP_SHUTDOWN:
             self.request_shutdown()
             return make_response(req_id, {"status": "stopping"})
@@ -349,7 +349,7 @@ class DaemonWorker:
             "pool": None,  # Task 11 接浏览器池真实统计
         }
 
-    async def _handle_cancel(self, req_id: int, payload: object) -> bytes:
+    async def _handle_cancel(self, req_id: int, payload: object, send) -> bytes:
         cancel_id = payload.get("cancel_id") if isinstance(payload, dict) else None
         if isinstance(cancel_id, bool) or not isinstance(cancel_id, int):
             return make_error(req_id, E_INTERNAL, "cancel payload 需要整数 cancel_id")
@@ -376,7 +376,17 @@ class DaemonWorker:
             )
             os.killpg(os.getpgid(0), signal.SIGKILL)
         except asyncio.CancelledError:
-            raise  # cancel op 自身被取消（事件循环关闭等），不吞
+            if target.cancelled():
+                # 目标任务以 cancelled 收场=取消已生效，但取消点落在任务未受
+                # 保护的 await 上（如响应帧的 _safe_send），E_CANCELLED 可能未
+                # 及发出——这里补发（重复发亦无害：客户端对已完成 id 的迟到
+                # 终帧忽略）。绝不能 re-raise：CancelledError 是 BaseException，
+                # 会穿透 _process_line 的宽兜底与连接读循环，杀死整个连接
+                # （cancel 调用方收到 EOF 而非响应，同连接其他 in-flight 请求
+                # 的响应通道一并丢失）。
+                await _safe_send(send, make_error(cancel_id, E_CANCELLED, "请求已被取消"))
+            else:
+                raise  # cancel op 自身被取消（事件循环关闭等），不吞
         except Exception:  # noqa: BLE001  目标任务以异常收场=取消已生效
             pass
         return make_response(req_id, {"cancelled": True})

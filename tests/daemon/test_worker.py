@@ -352,6 +352,49 @@ async def test_cancel_grace_exhausted_triggers_killpg(tmp_path, monkeypatch):
         release.set()  # 放行僵尸任务，让 serve 收尾能结束
 
 
+@pytest.mark.asyncio
+async def test_cancel_when_target_dies_cancelled_at_unprotected_await(tmp_path):
+    """回归（评审 Important）：target.cancel() 落在任务未受保护的 await 上
+    （如响应帧的 _safe_send）时，任务以 cancelled 收场，shield 把
+    CancelledError 传给 wait_for——_handle_cancel 必须按"取消成功"收尾：
+    给原始请求 id 发 E_CANCELLED 并正常返回 {"cancelled": true}，
+    绝不能 re-raise（CancelledError 是 BaseException，会穿透
+    _process_line 宽兜底杀死整个连接读循环）。
+    """
+    w = worker_mod.DaemonWorker(tmp_path / "unit.sock", 30.0, config_hash="ab12cd34")
+    started = asyncio.Event()
+
+    async def bare_target():
+        # 模拟取消点落在 _run_fetch 未捕获 CancelledError 的 await 上：
+        # 无内层捕获，cancel() 必然让任务以 cancelled 态收场
+        started.set()
+        await asyncio.sleep(30)
+
+    target = asyncio.create_task(bare_target())
+    w._tasks[2] = target
+    sent: list[bytes] = []
+
+    async def send(frame: bytes) -> None:
+        sent.append(frame)
+
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        resp = parse_frame(
+            await asyncio.wait_for(w._handle_cancel(3, {"cancel_id": 2}, send), 5)
+        )
+        assert target.cancelled()  # 任务确实以 cancelled 收场（复现前提）
+        assert resp["ok"] is True and resp["result"] == {"cancelled": True}
+        # 原始请求 id 收到终帧 E_CANCELLED（任务死在未保护 await 上时由此补发）
+        assert len(sent) == 1
+        terminal = parse_frame(sent[0])
+        assert terminal["id"] == 2
+        assert terminal["error"]["code"] == E_CANCELLED
+    finally:
+        if not target.done():
+            target.cancel()
+        await asyncio.gather(target, return_exceptions=True)
+
+
 # ---------- 坏帧韧性 ----------
 
 @pytest.mark.asyncio
