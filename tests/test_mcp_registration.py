@@ -195,6 +195,9 @@ class TestRunServerTransport:
         monkeypatch.setattr(
             mcp_module.MCPServer, "run", lambda self, **kw: captured.append(kw)
         )
+        # 热身的真实配置解析一并 stub 掉：本组用例只关心 transport/auth 分支,
+        # 不应执行 resolve_daemon_env（读环境/platformdirs、算 hash）。
+        monkeypatch.setattr(mcp_module, "resolve_daemon_env", lambda: ({}, "deadbeef"))
         return captured
 
     def test_streamable_http_with_auth_rebuilds(self, monkeypatch):
