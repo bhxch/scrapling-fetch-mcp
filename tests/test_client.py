@@ -462,3 +462,68 @@ async def test_adapter_error_mapping(tmp_path, patch_ensure):
 def test_get_client_singleton():
     assert get_client() is get_client()
     assert isinstance(get_client(), BackendClient)
+
+
+# ---------- 9. scraping_dir 前端归一化（C2 回归） ----------
+
+@pytest.mark.asyncio
+async def test_adapter_injects_absolute_scraping_dir_when_absent(
+    tmp_path, patch_ensure, monkeypatch
+):
+    """C2 回归：payload 缺省时注入 config.scraping_dir 的绝对值。
+
+    daemon 以 cwd="/" spawn：缺省时 wrapper 的 ".temp/scrapling/" 相对默认
+    会落到 /.temp（非 root 必 EACCES）。前端 cwd 即用户 cwd，归一化在此层
+    完成后 daemon 收到的就是可用绝对路径。
+    """
+    monkeypatch.chdir(tmp_path)
+
+    async def handler(frame: dict, send) -> None:
+        await send(make_response(frame["id"], {"result": "ok"}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)
+    adapter = make_adapter("fetch_page")
+    pattern_adapter = make_adapter("fetch_pattern")
+    try:
+        await asyncio.wait_for(
+            adapter(None, url="u", mode="basic", format="markdown",
+                    max_length=100, start_index=0), 5)
+        await asyncio.wait_for(
+            pattern_adapter(None, url="u", search_pattern="x", mode="basic",
+                            format="markdown", max_length=100), 5)
+        page = next(f for f in d.received if f["op"] == "fetch_page")
+        pattern = next(f for f in d.received if f["op"] == "fetch_pattern")
+        sd = page["payload"]["scraping_dir"]
+        assert Path(sd).is_absolute()
+        assert not sd.startswith("/.temp")
+        assert sd == str((tmp_path / ".temp/scrapling").resolve())  # config 缺省值
+        # 他 op 的 wrapper 不接受该形参：不注入，否则 daemon payload 键校验拒绝
+        assert "scraping_dir" not in pattern["payload"]
+    finally:
+        await get_client().aclose()
+        await d.kill()
+
+
+@pytest.mark.asyncio
+async def test_adapter_resolves_relative_scraping_dir(tmp_path, patch_ensure, monkeypatch):
+    """C2 回归：显式传入的相对 scraping_dir 就地 resolve 为绝对。"""
+    monkeypatch.chdir(tmp_path)
+
+    async def handler(frame: dict, send) -> None:
+        await send(make_response(frame["id"], {"result": "ok"}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)
+    adapter = make_adapter("fetch_page")
+    try:
+        await asyncio.wait_for(
+            adapter(None, url="u", mode="basic", format="markdown",
+                    max_length=100, start_index=0, scraping_dir="out/x"), 5)
+        page = next(f for f in d.received if f["op"] == "fetch_page")
+        assert page["payload"]["scraping_dir"] == str((tmp_path / "out/x").resolve())
+    finally:
+        await get_client().aclose()
+        await d.kill()

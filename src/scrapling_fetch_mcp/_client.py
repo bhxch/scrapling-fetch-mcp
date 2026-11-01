@@ -409,6 +409,27 @@ def get_client() -> BackendClient:
     return _client_instance
 
 
+def _normalize_scraping_dir(op: str, params: dict[str, Any]) -> None:
+    """把 ``scraping_dir`` 归一化为绝对路径（spec 已拍板：相对路径前端归一化）。
+
+    daemon 以 ``cwd="/"`` spawn，payload 里的相对路径——含缺省时 wrapper
+    的 ``".temp/scrapling/"`` 默认——会落到 ``/.temp``（非 root 必 EACCES）。
+    前端 cwd 即用户 cwd：缺省/空值注入 ``config.scraping_dir`` 的绝对值，
+    显式传入值就地 ``expanduser().resolve()``，与 0.2.x 前端直跑语义一致。
+    仅 fetch_page 的 wrapper 接受该形参（注入他 op 会触发 payload 键校验
+    拒绝）；``_config`` 函数内延迟 import（同 ``_watchdog_timeout``）。
+    """
+    if op != "fetch_page":
+        return
+    from scrapling_fetch_mcp._config import config
+
+    raw = params.get("scraping_dir")
+    if raw:
+        params["scraping_dir"] = str(Path(raw).expanduser().resolve())
+    else:
+        params["scraping_dir"] = str(config.scraping_dir.expanduser().resolve())
+
+
 def make_adapter(op: str) -> Callable[..., Awaitable[str]]:
     """生成 MCP 工具形态的异步函数 ``(ctx=None, **params) -> str``。
 
@@ -416,7 +437,7 @@ def make_adapter(op: str) -> Callable[..., Awaitable[str]]:
       cancel 帧 → re-raise（取消必须传播）。
     - ``BackendError`` 的 ``CONCURRENCY_LIMIT`` →
       ``RuntimeError("并发已达上限(全局),请稍后重试: ...")``；
-      其余 → ``RuntimeError(f"ERROR: {code}: {message}")``（MCP 框架把工具
+    其余 → ``RuntimeError(f"ERROR: {code}: {message}")``（MCP 框架把工具
       异常转 is_error 结果）。
     """
     client = get_client()
@@ -425,6 +446,7 @@ def make_adapter(op: str) -> Callable[..., Awaitable[str]]:
         # 取消句柄：call 内部重试会换新 id，cancel 必须命中当前生效的请求 id
         # （预分配 id 在重试后已不对应任何在途任务）
         active = ActiveCall()
+        _normalize_scraping_dir(op, params)
         try:
             resp = await client.call(op, params, ctx, active=active)
         except asyncio.CancelledError:
