@@ -434,3 +434,52 @@ def test_ensure_daemon_releases_spawn_lock_when_launch_fails(spawn_fake_daemon, 
     with pytest.raises(OSError):
         ensure_daemon({CONFIG_HASH_KEY: h}, h, timeout=10)
     assert not (d / f"{socket_name(h)}.spawn.lock").exists()
+
+
+def test_acquire_spawn_lock_reverifies_before_unlink(monkeypatch, tmp_path):
+    # 抢夺死锁前 unlink 必须重读复核 owner 仍死:首次检查与 unlink 之间
+    # 他方可能已重建新锁(活 pid),此刻重读判活即放弃抢夺,不误删他方新锁
+    gone = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    gone.wait()  # wait() 收尸,kill(pid,0) 判死
+    spawn_lock = tmp_path / "x.spawn.lock"
+    stale = {"pid": gone.pid}
+    spawn_lock.write_text(json.dumps(stale), encoding="utf-8")
+    calls = {"n": 0}
+    real_dead = lifecycle._spawn_lock_owner_dead
+
+    def revived_on_recheck(path):  # 首查判死,复核判活(锁已被他方重建)
+        calls["n"] += 1
+        return real_dead(path) if calls["n"] == 1 else False
+
+    monkeypatch.setattr(lifecycle, "_spawn_lock_owner_dead", revived_on_recheck)
+    assert lifecycle._acquire_spawn_lock(spawn_lock) is False  # 沦为轮询输家
+    assert json.loads(spawn_lock.read_text(encoding="utf-8")) == stale  # 原锁未被误删
+
+
+def test_acquire_spawn_lock_takes_over_when_owner_stays_dead(monkeypatch, tmp_path):
+    # 复核通过(锁仍指向死 pid)时照常夺锁——复核不得把正常自愈路径卡死
+    gone = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    gone.wait()
+    spawn_lock = tmp_path / "y.spawn.lock"
+    spawn_lock.write_text(json.dumps({"pid": gone.pid}), encoding="utf-8")
+    assert lifecycle._acquire_spawn_lock(spawn_lock) is True
+    assert json.loads(spawn_lock.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+
+def test_ensure_daemon_survives_spawn_lock_unlink_oserror(spawn_fake_daemon, monkeypatch):
+    # finally 释放 spawn.lock 遇非 FileNotFound 的 OSError:记 debug 后继续,
+    # 不掩盖 try 内结果——拉起成功照常返回 socket
+    d = spawn_fake_daemon
+    h = "ab12cd34"
+    real_unlink = Path.unlink
+
+    def picky(self, missing_ok=False):
+        if self.name.endswith(".spawn.lock"):
+            raise PermissionError(1, "EPERM")
+        return real_unlink(self)
+
+    monkeypatch.setattr(lifecycle.Path, "unlink", picky)
+    sock = ensure_daemon({CONFIG_HASH_KEY: h}, h, timeout=30)
+    assert sock.exists()
+    # 拉起成功但锁因 EPERM 未删:文件保留待下次自愈,不影响本用例结论
+    assert (d / f"{socket_name(h)}.spawn.lock").exists()

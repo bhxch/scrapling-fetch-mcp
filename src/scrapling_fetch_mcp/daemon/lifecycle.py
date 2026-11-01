@@ -30,6 +30,7 @@ Import 边界约束：仅 stdlib + ``daemon.paths``/``daemon.protocol``（均为
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -54,6 +55,8 @@ __all__ = [
     "socket_name",
     "transact",
 ]
+
+logger = logging.getLogger("scrapling_fetch_mcp.daemon.lifecycle")
 
 # spawn 的目标模块。模块级常量便于测试注入假 worker（monkeypatch 本名字）。
 _DAEMON_MODULE = "scrapling_fetch_mcp.daemon"
@@ -226,6 +229,14 @@ def _acquire_spawn_lock(spawn_lock: Path) -> bool:
             fd = os.open(spawn_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             if attempt == 0 and _spawn_lock_owner_dead(spawn_lock):
+                # unlink 前立即重读复核 owner 仍死：首次检查与 unlink 之间，
+                # 另一输家可能已夺走死锁并写入自己的活 pid——此刻重读判活，
+                # 放弃抢夺沦为轮询输家（避免误删他方新锁造成双 spawn）。
+                # 复核与 unlink 之间仍残留固有微窗口（他方恰在此瞬间重建新锁
+                # 会被误删），O_EXCL 仲裁只能收窄到这一步；窗口极小且其后果
+                # （双"胜者"）由后续 is_alive 复查与幂等清理兜底。
+                if not _spawn_lock_owner_dead(spawn_lock):
+                    return False
                 try:
                     spawn_lock.unlink()
                 except OSError:
@@ -328,3 +339,7 @@ def ensure_daemon(spawn_env: dict[str, str], config_hash: str, timeout: float = 
                 spawn_lock.unlink()
             except FileNotFoundError:
                 pass
+            except OSError:
+                # 释放失败（权限/并发竞态等）记日志后继续：finally 抛新异常
+                # 会掩盖 try 内原始异常，且自动重拉能力不应随单次失败丧失
+                logger.debug("spawn.lock 释放失败: %s", spawn_lock, exc_info=True)
