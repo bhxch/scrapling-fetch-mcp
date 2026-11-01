@@ -139,6 +139,46 @@ async def serve_stuck_ok_daemon(sock):
         await server.wait_closed()
 
 
+@asynccontextmanager
+async def serve_unauthorized_daemon(sock, *, token="real-token"):
+    """假 daemon：token 不匹配的请求回 E_UNAUTHORIZED 错误帧（存活但拒绝）。"""
+
+    async def handle(reader, writer):
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                frame = json.loads(line)
+                resp: dict = {"v": 2, "id": frame.get("id")}
+                if frame.get("token") != token:
+                    resp.update(
+                        {
+                            "ok": False,
+                            "error": {"code": "unauthorized", "message": "token 不匹配"},
+                        }
+                    )
+                else:
+                    resp.update({"ok": True, "result": {}})
+                writer.write(json.dumps(resp).encode() + b"\n")
+                await writer.drain()
+        except (ConnectionError, json.JSONDecodeError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+
+    server = await asyncio.start_unix_server(handle, str(sock))
+    try:
+        yield server
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 # ---------- status ----------
 
 @pytest.mark.asyncio
@@ -260,6 +300,31 @@ async def test_shutdown_timeout_escalates_sigterm_then_sigkill(daemon_env, monke
     assert not stuck.exists()
     assert not stuck.with_suffix(".lock").exists()
     assert "升级强杀" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_shutdown_error_frame_keeps_sock_and_lock(daemon_env, monkeypatch, capsys):
+    """ok:false 错误帧 = 存活 daemon 明确拒绝：不动 sock/lock，明确报错并计入失败。
+
+    token 竞态场景：CLI 按旧 lock token 发 shutdown，daemon 已换新 token
+    回 E_UNAUTHORIZED——此刻 sock/lock 是活 daemon 的身份文件，绝不能删，
+    也不可升级强杀；`--all` 聚合下该失败仍使 exit 1，其余 daemon 照常处理。
+    """
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    refuser = daemon_env / "daemon-0.0.0-cccc0000.sock"
+    _write_lock(refuser, pid=424242, token="stale-token", config_hash="cccc0000")
+    h = current_hash()
+    async with serve_unauthorized_daemon(refuser, token="real-token"):
+        async with serve_named_worker(daemon_env, h) as hnd:
+            rc = await asyncio.to_thread(mcp_mod._daemon_main, ["shutdown", "--all"])
+            assert rc == 1  # 拒绝计入失败
+            await asyncio.wait_for(hnd.task, 2.0)  # 其余 daemon 照常处理
+    out = capsys.readouterr()
+    assert "unauthorized" in out.err  # 明确报错
+    assert refuser.exists() and refuser.with_suffix(".lock").exists()  # 身份文件未删
+    assert killed == []  # 存活 daemon 不升级强杀
+    assert not hnd.sock.exists()
 
 
 # ---------- run_server argv 分流 ----------

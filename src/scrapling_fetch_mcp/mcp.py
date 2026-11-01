@@ -1,5 +1,6 @@
 import os
 import signal
+import socket
 import sys
 import time
 from argparse import ArgumentParser
@@ -22,8 +23,14 @@ from scrapling_fetch_mcp._skills import SKILL_URI, build_extension
 from scrapling_fetch_mcp._tool_factory import build_tool_function
 from scrapling_fetch_mcp.daemon.config_env import DAEMON_OWNED_ENV_KEYS, resolve_daemon_env
 from scrapling_fetch_mcp.daemon.lifecycle import daemon_sockets, read_lock, socket_name, transact
-from scrapling_fetch_mcp.daemon.paths import daemon_dir
-from scrapling_fetch_mcp.daemon.protocol import OP_SHUTDOWN, OP_STATUS
+from scrapling_fetch_mcp.daemon.paths import daemon_dir, pkg_version
+from scrapling_fetch_mcp.daemon.protocol import (
+    OP_SHUTDOWN,
+    OP_STATUS,
+    ProtocolError,
+    make_request,
+    parse_frame,
+)
 
 _skill_extension = build_extension()
 
@@ -150,23 +157,60 @@ def _escalate_and_clean(sock: Path) -> None:
             except OSError:
                 pass  # 已死/权限不足:清理尽力而为
     else:
-        print(f"{sock.name}: 超时未退出且 lock 无 pid, 直接清理残留")
+        print(f"{sock.name}: lock 无 pid, 按死残留清理")
     _cleanup_sock_and_lock(sock)
+
+
+def _transact_frame(sock: Path, op: str, token: str) -> dict | None:
+    """发一帧管理请求并返回完整响应帧；无响应（连接/超时/坏帧）返回 None。
+
+    与 lifecycle.transact 的差别：ok:false 错误帧原样返回——存活 daemon
+    明确拒绝（如 token 竞态）与"无响应=已死"必须区分，shutdown 收到错误
+    帧时绝不能清理对方的 sock/lock。
+    """
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(_SHUTDOWN_EXIT_WAIT)
+            s.connect(str(sock))
+            s.sendall(make_request(op, {}, token, 0, pkg_version()))
+            buf = bytearray()
+            while b"\n" not in buf:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+    except OSError:
+        return None
+    if b"\n" not in buf:
+        return None
+    try:
+        return parse_frame(bytes(buf).split(b"\n", 1)[0])
+    except ProtocolError:
+        return None
 
 
 def _shutdown_socket(sock: Path) -> bool:
     """停掉单个 socket 指向的 daemon；返回是否处理成功。
 
-    正常路径：lock 取 token → shutdown 请求 → 轮询等待 sock 消失（worker
-    退出时统一清理 lock 与 sock）。无 lock/5s 无响应：活 daemon 不可能超时，
-    按死残留直接清理 sock/lock（`--all` 清场的兜底语义）。已接受退出但
-    超时未退出：升级强杀（SIGTERM → 宽限 → SIGKILL → 清残留）。
+    lock 取 token → shutdown 请求，按响应三分支：
+    - ok:false 错误帧：daemon 存活但明确拒绝（token 竞态等）——绝不动
+      sock/lock（那是活 daemon 的身份文件），报错计入失败；
+    - None 无响应：活 daemon 不可能超时 → 僵死/已死，升级强杀 + 清残留；
+    - ok:true：轮询等 sock 消失，超时同样升级强杀 + 清残留。
     """
     lock = read_lock(sock)
-    resp = None if lock is None else transact(sock, OP_SHUTDOWN, str(lock.get("token") or ""))
+    resp = None if lock is None else _transact_frame(sock, OP_SHUTDOWN, str(lock.get("token") or ""))
+    if resp is not None and resp.get("ok") is not True:
+        err = resp.get("error") or {}
+        print(
+            f"{sock.name}: daemon 存活但拒绝 shutdown "
+            f"({err.get('code')}: {err.get('message')}), 保留 sock/lock",
+            file=sys.stderr,
+        )
+        return False
     if resp is None:
-        _cleanup_sock_and_lock(sock)
-        print(f"{sock.name}: 无响应, 已清理残留 sock/lock")
+        # 无 lock 或无响应:活 daemon 不可能超时,按僵死/已死升级强杀并清残留
+        _escalate_and_clean(sock)
         return True
     deadline = time.monotonic() + _SHUTDOWN_EXIT_WAIT
     while sock.exists() and time.monotonic() < deadline:
