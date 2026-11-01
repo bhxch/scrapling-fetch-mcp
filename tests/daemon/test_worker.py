@@ -1,0 +1,440 @@
+"""daemon/worker 测试（Task 7）。
+
+真 unix socket + 真事件循环直驱 ``DaemonWorker.serve()``；fetch op 用
+monkeypatch 假 wrapper，不起浏览器。覆盖：ping 身份、token 鉴权、fetch
+路由与 payload 校验、progress 桥、单连接多路复用、取消传播（正常取消 +
+宽限期耗尽 killpg 兜底）、并发限流错误码、坏帧不断连、空闲退出、
+shutdown 优雅退出、win32 拒绝。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import signal
+from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from scrapling_fetch_mcp._concurrency import ConcurrencyLimitError
+from scrapling_fetch_mcp.daemon import worker as worker_mod
+from scrapling_fetch_mcp.daemon.protocol import (
+    E_CANCELLED,
+    E_INTERNAL,
+    E_UNKNOWN_OP,
+    E_UNAUTHORIZED,
+    OP_CANCEL,
+    OP_FETCH_PAGE,
+    OP_FETCH_PATTERN,
+    OP_PING,
+    OP_SHUTDOWN,
+    OP_STATUS,
+    make_request,
+    parse_frame,
+)
+
+# fetch_page_wrapper 的必填形参（payload 键与 wrapper 形参一一对应）。
+PAGE_PAYLOAD = {
+    "url": "http://x",
+    "mode": "basic",
+    "format": "markdown",
+    "max_length": 100,
+    "start_index": 0,
+}
+PATTERN_PAYLOAD = {
+    "url": "http://x",
+    "search_pattern": "foo",
+    "mode": "basic",
+    "format": "markdown",
+    "max_length": 100,
+}
+
+
+class Client:
+    """测试用 NDJSON 客户端：open_unix_connection 收发整帧。"""
+
+    def __init__(self, sock: Path):
+        self._sock = sock
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+
+    async def __aenter__(self) -> "Client":
+        self._reader, self._writer = await asyncio.open_unix_connection(
+            str(self._sock), limit=64 * 1024 * 1024
+        )
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        self._writer.close()
+        try:
+            await self._writer.wait_closed()
+        except OSError:
+            pass
+
+    async def send(self, frame: bytes) -> None:
+        self._writer.write(frame)
+        await self._writer.drain()
+
+    async def recv(self) -> dict:
+        return parse_frame(await self._reader.readline())
+
+    async def request(self, op: str, payload: dict, token: str, req_id: int) -> dict:
+        await self.send(make_request(op, payload, token, req_id, "0.3.0"))
+        return await self.recv()
+
+
+@asynccontextmanager
+async def serve_worker(tmp_path, *, env_hash="ab12cd34", idle_timeout=30.0, **worker_kwargs):
+    """在进程内拉起 DaemonWorker 任务，就绪后 yield (sock, worker, task)。"""
+    sock = tmp_path / "worker.sock"
+    w = worker_mod.DaemonWorker(sock, idle_timeout, config_hash=env_hash, **worker_kwargs)
+    task = asyncio.create_task(w.serve())
+    # 轮询探活连接直至 serve 完成 bind（探活连接即连即关）
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while True:
+        try:
+            _reader, writer = await asyncio.open_unix_connection(str(sock))
+            break
+        except OSError:
+            if loop.time() > deadline:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+            await asyncio.sleep(0.02)
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+    try:
+        yield SimpleNamespace(sock=sock, worker=w, task=task)
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+# ---------- ping / 鉴权 ----------
+
+@pytest.mark.asyncio
+async def test_ping_reports_identity(tmp_path):
+    async with serve_worker(tmp_path, env_hash="ab12cd34") as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_PING, {}, h.worker.token, 1)
+    assert resp["ok"] is True
+    result = resp["result"]
+    assert result["status"] == "ready"
+    assert result["config_hash"] == "ab12cd34"
+    for key in ("pid", "pkg", "uptime_s", "clients"):
+        assert key in result
+
+
+@pytest.mark.asyncio
+async def test_wrong_token_rejected(tmp_path):
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_PING, {}, "wrong", 1)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == E_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_unknown_op_rejected(tmp_path):
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request("teleport", {}, h.worker.token, 1)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == E_UNKNOWN_OP
+
+
+# ---------- fetch 路由 / payload 校验 / progress 桥 ----------
+
+@pytest.mark.asyncio
+async def test_fetch_page_routes_to_wrapper_and_returns_result(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_wrapper(**kw):
+        seen.update(kw)
+        return "METADATA: {}\n\nbody"
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", fake_wrapper)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2)
+    assert resp["ok"] is True
+    assert resp["result"]["result"].endswith("body")
+    assert seen["url"] == "http://x"
+    assert seen["mode"] == "basic" and seen["max_length"] == 100
+    assert "ctx" not in seen or seen["ctx"] is not None  # 桥对象已注入
+
+
+@pytest.mark.asyncio
+async def test_fetch_pattern_routes_to_pattern_wrapper(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_pattern(**kw):
+        seen.update(kw)
+        return "match: foo"
+
+    monkeypatch.setattr(worker_mod, "fetch_pattern_wrapper", fake_pattern)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_FETCH_PATTERN, dict(PATTERN_PAYLOAD), h.worker.token, 2)
+    assert resp["ok"] is True
+    assert resp["result"]["result"] == "match: foo"
+    assert seen["search_pattern"] == "foo"
+
+
+@pytest.mark.asyncio
+async def test_fetch_payload_validation_errors(tmp_path):
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            bad_cases = [
+                "not-a-dict",  # payload 非 dict
+                {k: v for k, v in PAGE_PAYLOAD.items() if k != "url"},  # 缺必填键
+                {**PAGE_PAYLOAD, "bogus_key": 1},  # 未知键
+            ]
+            for i, payload in enumerate(bad_cases):
+                resp = await c.request(OP_FETCH_PAGE, payload, h.worker.token, 10 + i)
+                assert resp["ok"] is False, f"case {i} 应被拒绝"
+                assert resp["error"]["code"] == E_INTERNAL
+                assert resp["error"]["message"]
+            # 坏 payload 不伤连接：随后的 ping 正常应答
+            resp = await c.request(OP_PING, {}, h.worker.token, 99)
+            assert resp["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_progress_bridge_forwards_frames(tmp_path, monkeypatch):
+    async def fake_wrapper(**kw):
+        await kw["ctx"].report_progress(0, 100, "抓取中")
+        await kw["ctx"].report_progress(50, 100, None)  # message 缺省 → 空串
+        return "done"
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", fake_wrapper)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            await c.send(make_request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2, "0.3.0"))
+            p1 = await asyncio.wait_for(c.recv(), 5)
+            p2 = await asyncio.wait_for(c.recv(), 5)
+            final = await asyncio.wait_for(c.recv(), 5)
+    assert p1["id"] == 2 and p1["progress"] == {"progress": 0, "total": 100, "message": "抓取中"}
+    assert p2["progress"] == {"progress": 50, "total": 100, "message": ""}
+    assert final["ok"] is True and final["result"]["result"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_multiplex_two_requests_one_connection(tmp_path, monkeypatch):
+    a_started, b_started = asyncio.Event(), asyncio.Event()
+
+    async def fake_wrapper(**kw):
+        # 两个请求互相等待对方开跑：若 worker 串行处理 fetch 会死锁（5s 超时兜底）
+        if kw["url"] == "a://x":
+            a_started.set()
+            await asyncio.wait_for(b_started.wait(), 5)
+            return "A-done"
+        b_started.set()
+        await asyncio.wait_for(a_started.wait(), 5)
+        return "B-done"
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", fake_wrapper)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            await c.send(make_request(OP_FETCH_PAGE, {**PAGE_PAYLOAD, "url": "a://x"}, h.worker.token, 2, "0.3.0"))
+            await c.send(make_request(OP_FETCH_PAGE, {**PAGE_PAYLOAD, "url": "b://x"}, h.worker.token, 3, "0.3.0"))
+            r2 = await asyncio.wait_for(c.recv(), 5)
+            r3 = await asyncio.wait_for(c.recv(), 5)
+    by_id = {r2["id"]: r2, r3["id"]: r3}
+    assert set(by_id) == {2, 3}
+    assert by_id[2]["result"]["result"] == "A-done"
+    assert by_id[3]["result"]["result"] == "B-done"
+
+
+@pytest.mark.asyncio
+async def test_fetch_impl_error_maps_to_internal(tmp_path, monkeypatch):
+    async def boom(**kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", boom)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == E_INTERNAL
+    assert "boom" in resp["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_concurrency_limit_error_maps_to_limit_code(tmp_path, monkeypatch):
+    async def limited(**kw):
+        raise ConcurrencyLimitError("并发已达上限(2)，等待 0.5s 超时")
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", limited)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2)
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == "CONCURRENCY_LIMIT"
+
+
+# ---------- 取消传播 ----------
+
+@pytest.mark.asyncio
+async def test_cancel_propagates_and_reports_cancelled(tmp_path, monkeypatch):
+    started = asyncio.Event()
+
+    async def slow_wrapper(**kw):
+        started.set()
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", slow_wrapper)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            await c.send(make_request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2, "0.3.0"))
+            await asyncio.wait_for(started.wait(), 5)
+            await c.send(make_request(OP_CANCEL, {"cancel_id": 2}, h.worker.token, 3, "0.3.0"))
+            # E_CANCELLED 必发给原始请求 id，且先于 cancel 响应送达
+            cancelled_frame = await asyncio.wait_for(c.recv(), 5)
+            cancel_resp = await asyncio.wait_for(c.recv(), 5)
+        assert h.worker._tasks == {}
+    assert cancelled_frame["id"] == 2
+    assert cancelled_frame["ok"] is False
+    assert cancelled_frame["error"]["code"] == E_CANCELLED
+    assert cancel_resp["id"] == 3
+    assert cancel_resp["result"] == {"cancelled": True}
+
+
+@pytest.mark.asyncio
+async def test_cancel_unknown_id_reports_false(tmp_path):
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_CANCEL, {"cancel_id": 12345}, h.worker.token, 4)
+    assert resp["ok"] is True
+    assert resp["result"] == {"cancelled": False}
+
+
+@pytest.mark.asyncio
+async def test_cancel_grace_exhausted_triggers_killpg(tmp_path, monkeypatch):
+    """宽限期耗尽 → 核弹兜底：os.killpg(os.getpgid(0), SIGKILL) 被调用。
+
+    单测 monkeypatch killpg，不真杀进程（真进程检查留 Task 13）。
+    """
+    kill_calls = []
+    monkeypatch.setattr(
+        worker_mod.os, "killpg",
+        lambda pgid, sig: kill_calls.append((pgid, sig)),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def zombie_wrapper(**kw):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            # 模拟浏览器清理挂死：吞掉取消且长期不让出，直到测试放行
+            await release.wait()
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", zombie_wrapper)
+    async with serve_worker(tmp_path, cancel_grace=0.2) as h:
+        async with Client(h.sock) as c:
+            await c.send(make_request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2, "0.3.0"))
+            await asyncio.wait_for(started.wait(), 5)
+            await c.send(make_request(OP_CANCEL, {"cancel_id": 2}, h.worker.token, 3, "0.3.0"))
+            # 任务杀不死：无 E_CANCELLED 帧，cancel 响应仍照常返回
+            resp = await asyncio.wait_for(c.recv(), 5)
+            assert resp["id"] == 3
+            assert resp["result"] == {"cancelled": True}
+        assert kill_calls == [(os.getpgid(0), signal.SIGKILL)]
+        release.set()  # 放行僵尸任务，让 serve 收尾能结束
+
+
+# ---------- 坏帧韧性 ----------
+
+@pytest.mark.asyncio
+async def test_bad_frame_does_not_kill_connection(tmp_path):
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            await c.send(b"this is not json\n")
+            f1 = await asyncio.wait_for(c.recv(), 5)
+            # 深嵌套 JSON：json.loads 可能抛 RecursionError（穿透 ProtocolError），
+            # 读循环的宽兜底必须接住且不断连
+            deep = (
+                b'{"v":2,"id":9,"op":"ping","token":"t","payload":'
+                + b"[" * 5000 + b"]" * 5000 + b"}\n"
+            )
+            await c.send(deep)
+            f2 = await asyncio.wait_for(c.recv(), 5)
+            f3 = await c.request(OP_PING, {}, h.worker.token, 10)
+    assert f1["ok"] is False
+    assert f2["ok"] is False
+    assert f3["ok"] is True  # 连接与 worker 均存活
+
+
+# ---------- status ----------
+
+@pytest.mark.asyncio
+async def test_status_reports_snapshot(tmp_path):
+    async with serve_worker(tmp_path, env_hash="ab12cd34") as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_STATUS, {}, h.worker.token, 1)
+    assert resp["ok"] is True
+    r = resp["result"]
+    assert r["config_hash"] == "ab12cd34"
+    for key in ("pid", "pkg", "uptime_s", "clients", "cache_entries",
+                "stealth_ready", "degradation"):
+        assert key in r
+    assert r["pool"] is None  # Task 11 才接真实池统计
+
+
+# ---------- 空闲退出 / shutdown ----------
+
+@pytest.mark.asyncio
+async def test_idle_timeout_exits(tmp_path):
+    async with serve_worker(tmp_path, idle_timeout=0.2) as h:
+        async with Client(h.sock):
+            pass  # 建连即断：引用计数归零后启动空闲倒计时
+        await asyncio.wait_for(h.task, 0.5)  # 断连后 0.5s 内 serve() 返回
+    assert not h.sock.exists()
+    assert not h.sock.with_suffix(".lock").exists()
+
+
+@pytest.mark.asyncio
+async def test_new_connection_cancels_idle_wait(tmp_path):
+    async with serve_worker(tmp_path, idle_timeout=0.3) as h:
+        # 第一次连接断开后，在空闲超时窗内重连：worker 不得退出
+        async with Client(h.sock):
+            pass
+        await asyncio.sleep(0.15)  # 空闲等待已开始但未超时
+        async with Client(h.sock) as c:
+            resp = await asyncio.wait_for(
+                c.request(OP_PING, {}, h.worker.token, 1), 5
+            )
+            assert resp["ok"] is True
+        assert not h.task.done()  # 空闲等待被打断，worker 仍在服务
+        await asyncio.wait_for(h.task, 2.0)  # 随后按新倒计时正常空闲退出
+    assert not h.sock.exists()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_op_stops_worker(tmp_path):
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            resp = await c.request(OP_SHUTDOWN, {}, h.worker.token, 7)
+            assert resp["ok"] is True
+            await asyncio.wait_for(h.task, 2.0)  # 响应后 serve() 优雅返回
+    assert not h.sock.exists()
+    assert not h.sock.with_suffix(".lock").exists()
+
+
+# ---------- __main__ 入口 ----------
+
+def test_main_rejects_windows(monkeypatch):
+    from scrapling_fetch_mcp.daemon import __main__ as daemon_main
+
+    monkeypatch.setattr(daemon_main.sys, "platform", "win32")
+    with pytest.raises(RuntimeError):
+        daemon_main.main()

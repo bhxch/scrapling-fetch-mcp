@@ -19,9 +19,10 @@ Task 7 充实为可复用假实现）。模拟 Task 7 真 worker 的最小行为
 - 往 ``<name>.journal`` 追加本进程 pid：并发 spawn 仲裁测试据此断言
   只拉起过一个实例（测试专用工件，真 worker 无此文件）。
 
-Task 7 扩展点：``handle_frame`` 是唯一 op 分派入口，补 fetch_page/
-fetch_pattern/cancel/status/shutdown 路由、token 鉴权与空闲退出即可，
-serve 循环结构不变。
+Task 7 已落地真 worker（``scrapling_fetch_mcp.daemon.worker``，由
+``tests/daemon/test_worker.py`` 直驱测试）。本假实现不再扩展 op 面：它只
+服务 spawn 仲裁/生命周期测试，保持零重依赖（不起浏览器、不 import
+worker），与真 worker 的 lock/ping 契约同构即可。
 """
 
 from __future__ import annotations
