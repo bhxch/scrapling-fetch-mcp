@@ -7,12 +7,17 @@
    配置即换名隔离，互不打扰）。
 2. ``<name>.lock`` 存在且 :func:`is_alive`（lock pid 存活 + ping 应答自报
    的 pkg/hash 与期望一致）→ 直接复用。
-3. 否则 :func:`_cleanup_stale` 清理同名陈旧 sock/lock，``<name>.spawn.lock``
-   以 ``O_CREAT|O_EXCL`` 仲裁并发 spawn：抢到者 ``Popen`` 拉起
-   ``python -m <_DAEMON_MODULE>``（``start_new_session=True`` 使 daemon
-   成为自身进程组长——Task 7 的强杀兜底依赖此点；stdout/stderr 重定向到
-   ``<name>.log``），未抢到者只轮询等待。
-4. 双方都按 0.2s 间隔轮询 ping+is_alive 直至就绪或超时。
+3. ``<name>.spawn.lock`` 以 ``O_CREAT|O_EXCL`` **先仲裁**：仅持锁者有权
+   spawn 与清理，其余调用方沦为输家只轮询。输家发现 owner 已死（前端持锁
+   途中被杀、或启动途中抛错）→ unlink 后重试抢锁一次，自动重拉能力自愈，
+   不被陈旧仲裁锁永久卡死。
+4. 持锁者**复查** :func:`is_alive`（快速判负与抢到锁之间，先到者可能已
+   完成 spawn）→ 活着直接释放锁复用；否则 :func:`_cleanup_stale` 清理同名
+   陈旧 sock/lock 后 ``Popen`` 拉起 ``python -m <_DAEMON_MODULE>``
+   （``start_new_session=True`` 使 daemon 成为自身进程组长——Task 7 的
+   强杀兜底依赖此点；stdout/stderr 重定向到 ``<name>.log``）。
+5. 双方按 0.2s 间隔轮询 ping+is_alive 直至就绪或超时；持锁跨度由 finally
+   保证释放。
 
 不做打断式 kill 替换：应答身份不符只视为陈旧 socket，清理后按需重拉
 （旧 daemon 随其空闲退出自然消亡）。
@@ -150,11 +155,73 @@ def is_alive(sock: Path, expect_pkg: str, expect_hash: str) -> bool:
 
 # ---------- 拉起与仲裁 ----------
 
+def _spawn_lock_owner_dead(spawn_lock: Path) -> bool:
+    """仲裁锁 owner pid 已死则 True；内容缺失/不可解析按存活处理。
+
+    宁可轮询不可误夺：owner 刚 open 未 write pid 的微窗口若被误判死亡，
+    抢夺会造成双 spawn——比输家多等一轮超时严重得多。
+    """
+    try:
+        info = json.loads(spawn_lock.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(info, dict):
+        return False
+    pid = info.get("pid")
+    return isinstance(pid, int) and not isinstance(pid, bool) and not _pid_alive(pid)
+
+
+def _acquire_spawn_lock(spawn_lock: Path) -> bool:
+    """``O_CREAT|O_EXCL`` 抢仲裁锁；owner 已死的陈旧锁 unlink 后重试一次。
+
+    多个输家同时抢夺同一把死锁时，unlink 与重试的竞争由 O_EXCL 天然仲裁：
+    至多一方成功持有，其余 FileExists 后即按输家处理（不再二次抢夺）。
+    """
+    for attempt in (0, 1):
+        try:
+            fd = os.open(spawn_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if attempt == 0 and _spawn_lock_owner_dead(spawn_lock):
+                try:
+                    spawn_lock.unlink()
+                except OSError:
+                    return False  # 并发方已在处理,沦为轮询输家
+                continue
+            return False
+        try:
+            os.write(fd, json.dumps({"pid": os.getpid()}).encode())
+        finally:
+            os.close(fd)
+        return True
+    return False
+
+
+def _launch(d: Path, name: str, spawn_env: dict[str, str]) -> subprocess.Popen:
+    """拉起 daemon 子进程；stdout/stderr 追加到 ``<name>.log``。
+
+    调用方必须处于持有仲裁锁的 try/finally 保护内——open/Popen 抛错（如
+    ENOSPC）时锁仍被释放，自动重拉能力不会随单次异常永久丧失。
+    """
+    # append：同 (版本,hash) 的多次拉起日志累计留痕，便于事后排查
+    with open(d / f"{name}.log", "ab") as log:
+        return subprocess.Popen(
+            [sys.executable, "-m", _DAEMON_MODULE],
+            env={**os.environ, **spawn_env},
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            cwd="/",
+        )
+
+
 def _cleanup_stale(d: Path, name: str) -> None:
-    """清理同名陈旧 sock/lock（仅在判定 is_alive 为假后调用）。
+    """清理同名陈旧 sock/lock（仅持仲裁锁的胜者、且复查 is_alive 判负后调用）。
 
     绝不碰 ``<name>.spawn.lock``——那是并发 spawn 仲裁锁，删它会破坏互斥；
-    仲裁锁由抢锁方在 finally 中保证释放。
+    仲裁锁由抢锁方在 finally 中保证释放。输家无权调用本函数：其 is_alive
+    判负与清理之间可能恰有他者的 daemon 就绪，无差别 unlink 会误杀活跃
+    socket。
     """
     for suffix in (".sock", ".lock"):
         try:
@@ -183,7 +250,9 @@ def ensure_daemon(spawn_env: dict[str, str], config_hash: str, timeout: float = 
 
     ``spawn_env`` 为 Task 4 ``resolve_daemon_env`` 产出的 daemon-owned env，
     与 ``os.environ`` 合并后注入子进程。并发调用以 ``<name>.spawn.lock`` 的
-    ``O_CREAT|O_EXCL`` 仲裁：仅抢到者 spawn，其余轮询等待同一结果。
+    ``O_CREAT|O_EXCL`` 先仲裁：仅持锁者可 spawn 与清理；持锁后先复查
+    is_alive（期间先到者可能已就绪，命中即释放锁复用），输家在 owner 已死
+    时可抢夺一次。持锁跨度由 finally 保证释放。
     """
     if sys.platform == "win32":
         raise RuntimeError("daemon 模式依赖 unix socket, 暂不支持 Windows")
@@ -191,40 +260,23 @@ def ensure_daemon(spawn_env: dict[str, str], config_hash: str, timeout: float = 
     d = daemon_dir()
     name = socket_name(config_hash)
     sock = d / f"{name}.sock"
+    spawn_lock = d / f"{name}.spawn.lock"
     expect_pkg = pkg_version()
     deadline = time.monotonic() + timeout
 
     if is_alive(sock, expect_pkg, config_hash):
         return sock
 
-    _cleanup_stale(d, name)
-
-    spawn_lock = d / f"{name}.spawn.lock"
-    winner = False
-    try:
-        fd = os.open(spawn_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        try:
-            os.write(fd, json.dumps({"pid": os.getpid()}).encode())
-        finally:
-            os.close(fd)
-        winner = True
-    except FileExistsError:
-        winner = False
-
+    winner = _acquire_spawn_lock(spawn_lock)
     proc: subprocess.Popen | None = None
-    if winner:
-        # append:同 (版本,hash) 的多次拉起日志累计留痕,便于事后排查
-        with open(d / f"{name}.log", "ab") as log:
-            proc = subprocess.Popen(
-                [sys.executable, "-m", _DAEMON_MODULE],
-                env={**os.environ, **spawn_env},
-                start_new_session=True,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                cwd="/",
-            )
     try:
+        if winner:
+            # 复查：快速判负与抢到锁之间，先到者可能已完成 spawn（其 daemon
+            # 不受本锁约束）——命中即复用，绝不二次 spawn
+            if is_alive(sock, expect_pkg, config_hash):
+                return sock
+            _cleanup_stale(d, name)
+            proc = _launch(d, name, spawn_env)
         return _wait_ready(sock, expect_pkg, config_hash, deadline, proc)
     finally:
         if winner:

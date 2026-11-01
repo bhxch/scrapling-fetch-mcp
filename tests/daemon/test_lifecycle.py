@@ -72,6 +72,8 @@ def spawn_fake_daemon(monkeypatch, daemon_env):
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
     yield daemon_env
     for lock in daemon_env.glob("daemon-*.lock"):
+        if lock.name.endswith(".spawn.lock"):
+            continue  # 仲裁锁 owner 是测试进程自身,误读会 SIGTERM 自杀
         try:
             pid = json.loads(lock.read_text(encoding="utf-8"))["pid"]
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
@@ -309,3 +311,87 @@ def test_ensure_daemon_raises_when_worker_dies_at_boot(spawn_fake_daemon):
     # 进程的 stdout/stderr 落在 <name>.log,仲裁锁在 finally 中释放
     assert "模拟启动失败" in (d / f"{socket_name('ab12cd34')}.log").read_text(encoding="utf-8")
     assert not (d / f"{socket_name('ab12cd34')}.spawn.lock").exists()
+
+
+# ---------- 评审修复回归:仲裁竞态与陈旧 spawn.lock 自愈 ----------
+
+def _spawn_fake_by_hand(d: Path, h: str) -> subprocess.Popen:
+    """不经 ensure_daemon 直接拉起假 daemon(模拟"别的进程先完成 spawn")。"""
+    env = {
+        **os.environ,
+        "SCRAPLING_DAEMON_DIR": str(d),
+        CONFIG_HASH_KEY: h,
+        "PYTHONPATH": str(REPO_ROOT),
+    }
+    return subprocess.Popen(
+        [sys.executable, "-m", "tests.daemon.fake_worker"],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd="/",
+    )
+
+
+def _wait_manual_ready(sock: Path, h: str, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if is_alive(sock, pkg_version(), h):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"手工拉起的假 daemon 未就绪: {sock}")
+
+
+def test_ensure_daemon_takes_over_dead_spawner_lock(spawn_fake_daemon):
+    # 评审 Important 2:胜者持锁期间被杀,陈旧 spawn.lock 不得永久卡死重拉
+    d = spawn_fake_daemon
+    h = "ab12cd34"
+    gone = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    gone.wait()  # wait() 收尸,kill(pid,0) 判死
+    spawn_lock = d / f"{socket_name(h)}.spawn.lock"
+    spawn_lock.write_text(json.dumps({"pid": gone.pid}), encoding="utf-8")
+    sock = ensure_daemon({CONFIG_HASH_KEY: h}, h, timeout=30)
+    assert sock.exists()
+    assert not spawn_lock.exists()  # 死锁被夺且用后即清
+    journal = (d / f"{socket_name(h)}.journal").read_text(encoding="utf-8").split()
+    assert len(journal) == 1  # 接手方完成了一次真正的 spawn
+
+
+def test_ensure_daemon_winner_recheck_reuses_without_respawn(spawn_fake_daemon, monkeypatch):
+    # 评审 Important 1:快速判负→他者就绪→抢到锁 的窗口内,胜者复查命中活
+    # daemon 必须复用,绝不二次 spawn;输家路径(此处未走)也无权 cleanup
+    d = spawn_fake_daemon
+    h = "ab12cd34"
+    hand = _spawn_fake_by_hand(d, h)
+    sock = d / f"{socket_name(h)}.sock"
+    _wait_manual_ready(sock, h)
+    real_is_alive = lifecycle.is_alive
+    forced = {"done": False}
+
+    def flaky(s, pkg, hh):  # 首查强制判负,复现竞态窗口
+        if not forced["done"]:
+            forced["done"] = True
+            return False
+        return real_is_alive(s, pkg, hh)
+
+    monkeypatch.setattr(lifecycle, "is_alive", flaky)
+    got = ensure_daemon({CONFIG_HASH_KEY: h}, h, timeout=30)
+    assert got == sock
+    journal = (d / f"{socket_name(h)}.journal").read_text(encoding="utf-8").split()
+    assert journal == [str(hand.pid)]  # 只有手工拉起的那个实例,无二次 spawn
+    assert not (d / f"{socket_name(h)}.spawn.lock").exists()  # 复查命中即释放锁
+
+
+def test_ensure_daemon_releases_spawn_lock_when_launch_fails(spawn_fake_daemon, monkeypatch):
+    # 评审 Important 2:log open/Popen 抛错(如 ENOSPC)也必须释放仲裁锁,
+    # 自动重拉能力不随单次异常永久丧失
+    d = spawn_fake_daemon
+    h = "ab12cd34"
+
+    def boom(d_, name_, env_):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(lifecycle, "_launch", boom)
+    with pytest.raises(OSError):
+        ensure_daemon({CONFIG_HASH_KEY: h}, h, timeout=10)
+    assert not (d / f"{socket_name(h)}.spawn.lock").exists()
