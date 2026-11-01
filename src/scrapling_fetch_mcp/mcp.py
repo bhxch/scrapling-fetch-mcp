@@ -267,7 +267,8 @@ def _daemon_main(argv: list[str]) -> int:
     sp = sub.add_parser("shutdown", help="停止 daemon（默认仅当前版本+配置）")
     group = sp.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true",
-                       help="停止全部 daemon 并清理残留（含其他版本/配置）")
+                       help="停止全部 daemon 并清理残留（含其他版本/配置）；"
+                            "无匹配 daemon 时返回 0（无事可做）")
     group.add_argument("--socket", metavar="SOCK",
                        help="只处理指定 socket 名（可带 .sock 后缀）")
     args = parser.parse_args(argv)

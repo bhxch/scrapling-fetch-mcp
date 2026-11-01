@@ -99,6 +99,7 @@ scrapling-fetch-mcp daemon shutdown --all      # 停止全部 daemon 并清理�
 scrapling-fetch-mcp daemon shutdown --socket daemon-0.3.0-abcd1234   # 定点停止指定 socket
 ```
 
+退出码语义：默认 `shutdown` 与 `--socket` 定点在目标不存在时退出 1；`shutdown --all` 在无匹配 daemon 时返回 0（无事可做）。
 > **Windows 暂不支持**：daemon 依赖 unix socket，仅限 Linux/macOS；Windows 上会直接报错。
 
 ### 并发语义变化
