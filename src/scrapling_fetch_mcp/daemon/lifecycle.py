@@ -332,7 +332,15 @@ def ensure_daemon(spawn_env: dict[str, str], config_hash: str, timeout: float = 
                 return sock
             _cleanup_stale(d, name)
             proc = _launch(d, name, spawn_env)
-        return _wait_ready(sock, expect_pkg, config_hash, deadline, proc)
+        try:
+            return _wait_ready(sock, expect_pkg, config_hash, deadline, proc)
+        except TimeoutError:
+            # 超时前的最后一次自愈复查：owner 可能恰在最后一个轮询间隔内
+            # 才就绪（0.2s spin 粒度），或 socket 已中途换血为他方新拉的
+            # daemon。复查命中即复用，仍失败才按超时抛出。
+            if is_alive(sock, expect_pkg, config_hash):
+                return sock
+            raise
     finally:
         if winner:
             try:

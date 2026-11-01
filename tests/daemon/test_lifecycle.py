@@ -483,3 +483,26 @@ def test_ensure_daemon_survives_spawn_lock_unlink_oserror(spawn_fake_daemon, mon
     assert sock.exists()
     # 拉起成功但锁因 EPERM 未删:文件保留待下次自愈,不影响本用例结论
     assert (d / f"{socket_name(h)}.spawn.lock").exists()
+
+
+def test_ensure_daemon_late_ready_recovered_by_final_recheck(spawn_fake_daemon, monkeypatch):
+    # 输家自愈:daemon 在轮询末尾才就绪(每次轮询恰好判负),超时前的最后一
+    # 次 is_alive 复查必须兜住,而不是立即 TimeoutError
+    d = spawn_fake_daemon
+    h = "ab12cd34"
+    hand = _spawn_fake_by_hand(d, h)
+    sock = d / f"{socket_name(h)}.sock"
+    _wait_manual_ready(sock, h)
+    # 预置活 owner 的仲裁锁:钉死输家路径(绝不 spawn/清理他方 daemon)
+    (d / f"{socket_name(h)}.spawn.lock").write_text(
+        json.dumps({"pid": os.getpid()}), encoding="utf-8"
+    )
+    real_is_alive = lifecycle.is_alive
+    t0 = time.monotonic()
+
+    def blind_until_end(s, pkg, hh):  # 轮询窗口内一直判负,仅超时后的复查放行
+        return real_is_alive(s, pkg, hh) if time.monotonic() - t0 > 0.42 else False
+
+    monkeypatch.setattr(lifecycle, "is_alive", blind_until_end)
+    got = ensure_daemon({CONFIG_HASH_KEY: h}, h, timeout=0.5)
+    assert got == sock  # 超时复查命中,成功返回而非抛 TimeoutError
