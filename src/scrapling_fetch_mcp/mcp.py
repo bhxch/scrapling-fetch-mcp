@@ -505,6 +505,20 @@ def run_server():
         help="池中单个浏览器会话服务多少次请求后回收。默认: 50。"
         "也可通过 SCRAPLING_POOL_MAX_REQUESTS 环境变量设置。",
     )
+    parser.add_argument(
+        "--daemon-dir",
+        type=str,
+        default=None,
+        help="daemon 运行目录（sock/lock/log 存放处）。默认: platformdirs 用户数据目录。"
+        "也可通过 SCRAPLING_DAEMON_DIR 环境变量设置。",
+    )
+    parser.add_argument(
+        "--daemon-idle-timeout",
+        type=float,
+        default=None,
+        help="daemon 全部客户端断开后空闲多久自动退出（秒）。默认: 600。"
+        "也可通过 SCRAPLING_DAEMON_IDLE_TIMEOUT 环境变量设置。",
+    )
     args = parser.parse_args()
 
 
@@ -563,6 +577,12 @@ def run_server():
         config.set_pool_max_sessions(args.pool_max_sessions)
     if args.pool_max_requests is not None:
         config.set_pool_max_requests(args.pool_max_requests)
+
+    # daemon 生命周期键（不入 daemon env/hash,仅影响本地目录与空闲退出）
+    if args.daemon_dir:
+        config.set_daemon_dir(args.daemon_dir)
+    if args.daemon_idle_timeout is not None:
+        config.set_daemon_idle_timeout(args.daemon_idle_timeout)
 
     # Resolve features (merge env raw values + CLI args, call once)
     disable_cli_list = [f.strip() for f in args.disable_features.split(",") if f.strip()]

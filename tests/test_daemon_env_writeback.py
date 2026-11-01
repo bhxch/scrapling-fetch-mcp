@@ -165,3 +165,29 @@ def test_run_server_wiring_env_base_kept_when_cli_absent(clean_daemon_env, monke
     assert env["SCRAPLING_MARKDOWN_CONVERTER"] == "markdownify"
     cfg = Config()  # 单例真相源同样是 env 值
     assert cfg.markdown_converter == "markdownify"
+
+
+def test_run_server_wiring_daemon_dir_flag(clean_daemon_env, monkeypatch):
+    """--daemon-dir 覆盖生效于 config 单例（生命周期键,不入 daemon env/hash）。"""
+    import scrapling_fetch_mcp.mcp as mcp_mod
+
+    monkeypatch.delenv("SCRAPLING_DAEMON_DIR", raising=False)
+    config._daemon_dir = None  # 基线归零,防同进程更早用例残留
+    monkeypatch.setattr(mcp_mod.MCPServer, "run", lambda self, **kw: None)
+    monkeypatch.setattr(sys, "argv", ["scrapling-fetch-mcp", "--daemon-dir", "ddir"])
+    mcp_mod.run_server()
+    assert config.daemon_dir == Path("ddir")
+
+
+def test_run_server_wiring_daemon_idle_timeout_flag(clean_daemon_env, monkeypatch):
+    """--daemon-idle-timeout 覆盖生效于 config 单例（生命周期键,不入 daemon env）。"""
+    import scrapling_fetch_mcp.mcp as mcp_mod
+
+    monkeypatch.delenv("SCRAPLING_DAEMON_IDLE_TIMEOUT", raising=False)
+    config._daemon_idle_timeout = 600.0  # 基线归位,防同进程更早用例残留
+    monkeypatch.setattr(mcp_mod.MCPServer, "run", lambda self, **kw: None)
+    monkeypatch.setattr(
+        sys, "argv", ["scrapling-fetch-mcp", "--daemon-idle-timeout", "123.5"]
+    )
+    mcp_mod.run_server()
+    assert config.daemon_idle_timeout == 123.5

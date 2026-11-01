@@ -168,8 +168,8 @@ These settings are configured when starting the MCP server, either via CLI argum
 | `--pool-max-sessions` | `SCRAPLING_POOL_MAX_SESSIONS` | `int` | `4` | Max pooled browser sessions (LRU eviction) |
 | `--pool-max-requests` | `SCRAPLING_POOL_MAX_REQUESTS` | `int` | `50` | Requests a pooled session serves before recycle |
 | — | `SCRAPLING_CACHE_MAX_ENTRIES` | `int` | `256` | Page cache max entries (expired-first, then FIFO eviction) |
-| — | `SCRAPLING_DAEMON_DIR` | `str` | platformdirs user data dir | Daemon runtime directory (sockets/locks/logs; env only) |
-| — | `SCRAPLING_DAEMON_IDLE_TIMEOUT` | `float` | `600` | Seconds of no clients before the daemon exits (env only) |
+| `--daemon-dir` | `SCRAPLING_DAEMON_DIR` | `str` | platformdirs user data dir | Daemon runtime directory (sockets/locks/logs) |
+| `--daemon-idle-timeout` | `SCRAPLING_DAEMON_IDLE_TIMEOUT` | `float` | `600` | Seconds of no clients before the daemon exits |
 
 ### Streamable-HTTP (Remote Access)
 
