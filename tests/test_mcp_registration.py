@@ -180,7 +180,16 @@ class TestRunServerTransport:
 
     def _stub(self, monkeypatch):
         import scrapling_fetch_mcp.mcp as mcp_module
+        from scrapling_fetch_mcp.daemon.config_env import DAEMON_OWNED_ENV_KEYS
+
         for k in self._ENV_KEYS:
+            monkeypatch.delenv(k, raising=False)
+        # run_server 现在会把 daemon-owned 生效值写回 os.environ（CLI 覆盖
+        # 抵达 daemon 的修复）：逐键 delenv 让本用例从干净 env 起跑，且
+        # teardown 会把写回的键一并清掉，不泄漏给后续用例（否则下个
+        # run_server 的 init_config_from_env 会把上一个用例写回的值当
+        # 用户 env 重新吸收，scraping_dir 等被钉成绝对路径）。
+        for k in DAEMON_OWNED_ENV_KEYS:
             monkeypatch.delenv(k, raising=False)
         captured = []
         monkeypatch.setattr(

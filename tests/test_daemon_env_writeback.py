@@ -31,13 +31,22 @@ def clean_daemon_env(tmp_path, monkeypatch):
 
     os.environ 与 config 单例都是进程级全局：快照逐键恢复（sync 写进的
     键一并清掉），不靠 monkeypatch.delenv（它管不到 sync 的直接写入）。
+    transport/token 钉回 stdio/空：同进程更早的测试可能把单例留在
+    streamable-http+token（test_config 的已知残留），run_server 会走 auth
+    分支重绑全局 mcp，污染后续 registration 断言。全局 mcp 一并保存/恢复。
     """
+    import scrapling_fetch_mcp.mcp as mcp_mod
+
     monkeypatch.chdir(tmp_path)
     saved_env = {k: os.environ.get(k) for k in DAEMON_OWNED_ENV_KEYS}
     for k in DAEMON_OWNED_ENV_KEYS:
         os.environ.pop(k, None)
     snapshot = dict(config.__dict__)  # set_* 写实例属性,类级默认不受影响
+    saved_mcp = mcp_mod.mcp
+    config._transport = "stdio"
+    config._auth_token = ""
     yield config
+    mcp_mod.mcp = saved_mcp
     config.__dict__.clear()
     config.__dict__.update(snapshot)
     for k, v in saved_env.items():
