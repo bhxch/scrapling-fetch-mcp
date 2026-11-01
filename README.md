@@ -109,7 +109,7 @@ scrapling-fetch-mcp daemon shutdown --socket daemon-0.3.0-abcd1234   # 定点停
 
 ### 浏览器池（可选，默认关闭）
 
-`--browser-pool`（env `SCRAPLING_BROWSER_POOL`）开启后，stealth/max-stealth 请求按 **(eTLD+1 注册域名, mode)** 分桶复用 Firefox 会话，省去每次冷启动（数秒 + 数百 MB 峰值）。跨域名不共享身份；任一重建触发即销毁重建：空闲 >300s、累计年龄 >1800s（指纹新鲜度硬上限）、请求数 >50、抓取异常、疑似挑战页。池上限 4 个活跃会话（`SCRAPLING_POOL_MAX_SESSIONS`，LRU 逐出）。daemon 空闲退出或版本重拉时全部池化会话销毁，不留持久状态。
+`--browser-pool`（env `SCRAPLING_BROWSER_POOL`）开启后，stealth/max-stealth 请求按 **(eTLD+1 注册域名, mode)** 分桶复用 Firefox 会话，省去每次冷启动（数秒 + 数百 MB 峰值）。跨域名不共享身份；任一重建触发即销毁重建：空闲 >300s、累计年龄 >1800s（指纹新鲜度硬上限）、请求数达 50（每会话恰服务 50 次）、抓取异常、疑似挑战页。池上限 4 个活跃会话（`SCRAPLING_POOL_MAX_SESSIONS`，LRU 逐出）。daemon 空闲退出或版本重拉时全部池化会话销毁，不留持久状态。
 
 ### 已知限制：多客户端并发下的取消波及
 
