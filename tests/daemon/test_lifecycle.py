@@ -231,6 +231,45 @@ def test_ping_roundtrip_and_missing_sock(tmp_path):
     assert ping(tmp_path / "ghost.sock", "tok") is None  # 不存在的 socket → None
 
 
+# ---------- _pid_alive：僵尸判死与 /proc 回退 ----------
+
+def test_parse_stat_handles_comm_with_spaces_and_parens():
+    """comm 可含空格与括号：从最后一个 ')' 之后取状态字段。"""
+    assert lifecycle._parse_stat("1234 (python3 -c (x)) S 1 2 3") == "S"
+    assert lifecycle._parse_stat("1234 (python3) Z 1 2 3") == "Z"
+    assert lifecycle._parse_stat("1234 no-parens") is None
+    assert lifecycle._parse_stat("1234 (comm)") is None  # ')' 后无字段
+
+
+def test_pid_alive_false_on_zombie():
+    """fork 出立即退出的子进程（父进程未收尸即僵尸）：kill(pid,0) 仍成功
+    但必须判死——否则指向僵尸的 lock 会把重拉卡在复用假活进程上。"""
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0)  # 子进程立即退出,进入 Z 态直到父进程 waitpid
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+                if lifecycle._parse_stat(stat) == "Z":
+                    break
+            except OSError:
+                pass
+            time.sleep(0.01)
+        else:
+            pytest.fail("子进程 5s 内未进入僵尸态")
+        assert lifecycle._pid_alive(pid) is False
+    finally:
+        os.waitpid(pid, 0)  # 收尸,不留僵尸污染测试进程
+
+
+def test_pid_alive_falls_back_to_kill_when_proc_unreachable(monkeypatch):
+    """/proc 不可达（_proc_state 返回 None）时保持 os.kill 判定。"""
+    monkeypatch.setattr(lifecycle, "_proc_state", lambda pid: None)
+    assert lifecycle._pid_alive(os.getpid()) is True
+
+
 # ---------- ensure_daemon ----------
 
 def test_ensure_daemon_rejects_windows(monkeypatch, daemon_env):

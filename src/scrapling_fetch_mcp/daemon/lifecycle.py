@@ -132,8 +132,36 @@ def read_lock(sock: Path) -> dict | None:
     return info if isinstance(info, dict) else None
 
 
+def _parse_stat(stat_text: str) -> str | None:
+    """从 ``/proc/<pid>/stat`` 内容取状态字段；畸形内容返回 None。
+
+    comm 字段（第二字段）可含空格与括号，从最后一个 ``)`` 之后切字段：
+    其后首个字段即状态（``R``/``S``/``Z``/...，内核 proc(5) 约定）。
+    """
+    head = stat_text.rfind(")")
+    if head < 0:
+        return None
+    fields = stat_text[head + 1:].split()
+    return fields[0] if fields else None
+
+
+def _proc_state(pid: int) -> str | None:
+    """读 ``/proc/<pid>/stat`` 取进程状态字段；/proc 不可达返回 None。"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return _parse_stat(stat)
+
+
 def _pid_alive(pid: object) -> bool:
-    """``kill(pid, 0)`` 探活：非正整数/不存在为假，无权限视为活着。"""
+    """``kill(pid, 0)`` 探活：非正整数/不存在/僵尸(Z)为假，无权限视为活着。
+
+    僵尸进程已死但未被收尸，``kill(pid, 0)`` 仍成功——lock 文件指向这种
+    pid 时必须判死，否则陈旧 daemon 的 lock 会把重拉卡在"复用假活进程"。
+    Linux 下追加 ``/proc/<pid>/stat`` 状态检查；/proc 不可达（macOS 等）
+    保持纯 ``os.kill`` 判定。
+    """
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return False
     try:
@@ -143,6 +171,8 @@ def _pid_alive(pid: object) -> bool:
     except PermissionError:
         return True
     except OSError:
+        return False
+    if _proc_state(pid) == "Z":
         return False
     return True
 
