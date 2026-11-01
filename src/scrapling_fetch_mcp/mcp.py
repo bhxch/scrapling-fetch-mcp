@@ -1,4 +1,5 @@
 import os
+import signal
 import sys
 import time
 from argparse import ArgumentParser
@@ -70,6 +71,9 @@ def _register_tool(name, param_configs, base_docstring, impl_func):
 # 内联即时应答，5s 无响应即视为已死（与 lifecycle.transact 的默认超时一致）。
 _SHUTDOWN_EXIT_WAIT = 5.0
 
+# SIGTERM 后给 worker 自行退出（清理 sock/lock/浏览器）的宽限，仍活才 SIGKILL。
+_ESCALATION_TERM_WAIT = 2.0
+
 
 def _fmt(value: object) -> str:
     """表格单元格：None → "-"。"""
@@ -113,29 +117,62 @@ def _daemon_status() -> int:
     return 0
 
 
+def _cleanup_sock_and_lock(sock: Path) -> None:
+    """尽力而为地清理残留 sock/lock（已被并发清理等情形静默忽略）。"""
+    for path in (sock, sock.with_suffix(".lock")):
+        try:
+            path.unlink()
+        except OSError:
+            pass  # 已被并发清理等;清理尽力而为
+
+
+def _escalate_and_clean(sock: Path) -> None:
+    """sock 迟迟不消失时的强杀升级：SIGTERM → 2s → 仍活 SIGKILL → 清残留。
+
+    pid 读自目标 daemon 自己的 lock（daemon spawn 时 start_new_session 为
+    自身进程组长，SIGTERM/SIGKILL 只命中 daemon 不会误伤前端）。SIGTERM
+    给 worker 优雅退出（清浏览器/删 sock/lock）的机会，宽限后仍活着才
+    SIGKILL。lock 缺失/无 pid（死残留）则跳过强杀直接清理。
+    """
+    pid = (read_lock(sock) or {}).get("pid")
+    if isinstance(pid, int) and pid > 0:
+        print(f"{sock.name}: 超时未退出, 升级强杀 (pid={pid})")
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass  # 进程已死等:按残留清理
+        deadline = time.monotonic() + _ESCALATION_TERM_WAIT
+        while sock.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if sock.exists():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass  # 已死/权限不足:清理尽力而为
+    else:
+        print(f"{sock.name}: 超时未退出且 lock 无 pid, 直接清理残留")
+    _cleanup_sock_and_lock(sock)
+
+
 def _shutdown_socket(sock: Path) -> bool:
     """停掉单个 socket 指向的 daemon；返回是否处理成功。
 
     正常路径：lock 取 token → shutdown 请求 → 轮询等待 sock 消失（worker
     退出时统一清理 lock 与 sock）。无 lock/5s 无响应：活 daemon 不可能超时，
-    按死残留直接清理 sock/lock（`--all` 清场的兜底语义）。
+    按死残留直接清理 sock/lock（`--all` 清场的兜底语义）。已接受退出但
+    超时未退出：升级强杀（SIGTERM → 宽限 → SIGKILL → 清残留）。
     """
     lock = read_lock(sock)
     resp = None if lock is None else transact(sock, OP_SHUTDOWN, str(lock.get("token") or ""))
     if resp is None:
-        for path in (sock, sock.with_suffix(".lock")):
-            try:
-                path.unlink()
-            except OSError:
-                pass  # 已被并发清理等;清理尽力而为
+        _cleanup_sock_and_lock(sock)
         print(f"{sock.name}: 无响应, 已清理残留 sock/lock")
         return True
     deadline = time.monotonic() + _SHUTDOWN_EXIT_WAIT
     while sock.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     if sock.exists():
-        print(f"{sock.name}: 已接受退出请求但超时未退出", file=sys.stderr)
-        return False
+        _escalate_and_clean(sock)
     return True
 
 

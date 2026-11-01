@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import sys
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -46,6 +48,22 @@ def daemon_env(monkeypatch, tmp_path):
 def current_hash() -> str:
     """测试进程当前的 config_hash——CLI 默认 shutdown 的目标身份。"""
     return resolve_daemon_env()[1]
+
+
+def _write_lock(sock, *, pid, token="tok", config_hash="deadbeef", pkg="0.2.0") -> None:
+    """写同构 lock 文件（daemon 进程自写 {"pid","token","pkg","config_hash","sock"}）。"""
+    sock.with_suffix(".lock").write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "token": token,
+                "pkg": pkg,
+                "config_hash": config_hash,
+                "sock": str(sock),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @asynccontextmanager
@@ -145,18 +163,7 @@ def test_status_marks_dead_socket_and_hints_all(daemon_env, capsys):
     """连接失败（假 sock 文件）→ DEAD 标记 + `shutdown --all` 清理提示。"""
     sock = daemon_env / "daemon-0.2.0-deadbeef.sock"
     sock.write_text("not a socket")
-    sock.with_suffix(".lock").write_text(
-        json.dumps(
-            {
-                "pid": 999999999,
-                "token": "tok",
-                "pkg": "0.2.0",
-                "config_hash": "deadbeef",
-                "sock": str(sock),
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_lock(sock, pid=999999999, config_hash="deadbeef")
     rc = mcp_mod._daemon_main(["status"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -215,35 +222,44 @@ async def test_shutdown_all_cleans_residue_and_stops_alive(daemon_env):
 
 
 @pytest.mark.asyncio
-async def test_shutdown_all_does_not_short_circuit_on_failure(daemon_env, monkeypatch, capsys):
-    """--all 不短路：首个 daemon 停止失败后，其余 socket 仍被逐个处理。
+async def test_shutdown_all_processes_every_socket_stuck_first(daemon_env, monkeypatch, capsys):
+    """--all 不短路：首个 daemon 卡死走强杀升级后，其余 socket 仍被逐个处理。
 
     假 daemon（0.0.0 版本名排序在前）应答 shutdown 成功帧但 sock 永不消失
-    → 超时失败；排在后面的真 worker 必须仍被正常停止。
+    → 等待超时升级强杀；排在后面的真 worker 必须仍被正常停止。
     """
     monkeypatch.setattr(mcp_mod, "_SHUTDOWN_EXIT_WAIT", 0.3)
+    monkeypatch.setattr(mcp_mod, "_ESCALATION_TERM_WAIT", 0.3)
     stuck = daemon_env / "daemon-0.0.0-aaaa0000.sock"
-    stuck.with_suffix(".lock").write_text(
-        json.dumps(
-            {
-                "pid": 999999999,
-                "token": "tok",
-                "pkg": "0.0.0",
-                "config_hash": "aaaa0000",
-                "sock": str(stuck),
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_lock(stuck, pid=999999999, token="tok", config_hash="aaaa0000")
     h = current_hash()
     async with serve_stuck_ok_daemon(stuck):
         async with serve_named_worker(daemon_env, h) as hnd:
             rc = await asyncio.to_thread(mcp_mod._daemon_main, ["shutdown", "--all"])
-            assert rc == 1
+            assert rc == 0  # 强杀升级完成清场,不算失败
             await asyncio.wait_for(hnd.task, 2.0)  # 后面的真 daemon 仍被处理
     out = capsys.readouterr()
-    assert stuck.name in out.err  # 失败清单
+    assert "升级强杀" in out.out  # 升级过程有输出说明
+    assert not stuck.exists() and not stuck.with_suffix(".lock").exists()  # 残留已清
     assert not hnd.sock.exists()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_timeout_escalates_sigterm_then_sigkill(daemon_env, monkeypatch, capsys):
+    """等待超时升级序列：SIGTERM → 宽限等待 → 仍活 SIGKILL，pid 取自 lock。"""
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(mcp_mod, "_SHUTDOWN_EXIT_WAIT", 0.2)
+    monkeypatch.setattr(mcp_mod, "_ESCALATION_TERM_WAIT", 0.3)
+    stuck = daemon_env / "daemon-0.0.0-bbbb0000.sock"
+    _write_lock(stuck, pid=424242, token="tok", config_hash="bbbb0000")
+    async with serve_stuck_ok_daemon(stuck):
+        rc = await asyncio.to_thread(mcp_mod._shutdown_socket, stuck)
+    assert rc is True  # 强杀后清场,视为处理成功
+    assert killed == [(424242, signal.SIGTERM), (424242, signal.SIGKILL)]  # 顺序+pid 来自 lock
+    assert not stuck.exists()
+    assert not stuck.with_suffix(".lock").exists()
+    assert "升级强杀" in capsys.readouterr().out
 
 
 # ---------- run_server argv 分流 ----------
