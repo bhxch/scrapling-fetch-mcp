@@ -235,6 +235,36 @@ async def test_call_without_ctx_skips_progress_bridge(tmp_path, patch_ensure):
         await d.kill()
 
 
+@pytest.mark.asyncio
+async def test_hung_progress_callback_does_not_block_result(tmp_path, patch_ensure, monkeypatch):
+    """progress 回调卡死：结果仍有界及时返回（progress 交付是尽力而为）。"""
+    monkeypatch.setattr(client_mod, "_PROGRESS_DRAIN_TIMEOUT", 0.2)
+
+    class HungCtx:
+        async def report_progress(self, p, t, m=None):
+            await asyncio.sleep(30)  # 卡死：永不主动完成
+
+    async def handler(frame: dict, send) -> None:
+        await send(make_progress(frame["id"], 1, 2, "x"))
+        await send(make_response(frame["id"], {"result": "OK"}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)
+    c = BackendClient()
+    try:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        resp = await asyncio.wait_for(c.call("fetch_page", {"url": "u"}, HungCtx()), 5)
+        elapsed = loop.time() - start
+        assert resp["result"] == "OK"
+        # 旧实现会 gather 到回调的 30s 睡眠结束；有界化后拖满收尾窗口即交付
+        assert elapsed < 3.0
+    finally:
+        await c.aclose()
+        await d.kill()
+
+
 # ---------- 2. daemon 死亡自动重拉 ----------
 
 @pytest.mark.asyncio

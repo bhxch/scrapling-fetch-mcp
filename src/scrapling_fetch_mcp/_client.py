@@ -69,6 +69,9 @@ _ENSURE_TIMEOUT = 60.0
 _WATCHDOG_SLACK = 60.0
 # cancel 帧 / 取消收尾的发送期限：尽力而为，超时即放弃（不拦取消传播）。
 _CANCEL_TIMEOUT = 2.0
+# progress 回调的收尾期限（秒）：顺序语义（进度先于完成）尽力保，回调卡死
+# 不拖结果交付。
+_PROGRESS_DRAIN_TIMEOUT = 5.0
 # 连接级故障的重试上限（brief：丢弃连接 → 重跑 ensure_daemon → 最多重试 2 次）。
 _MAX_RETRIES = 2
 
@@ -390,12 +393,26 @@ class BackendClient:
                     CODE_TIMEOUT,
                     f"请求 {timeout:.0f}s 内未完成(acquire+fetch+60s 看门狗), 已发 cancel 帧取消",
                 ) from None
-            # 先等 progress 回调落地再返回结果：保证顺序语义（进度先于完成）
+            # 先等 progress 回调落地再返回结果：保证顺序语义（进度先于完成）；
+            # 交付是尽力而为——卡死的回调最多拖满有界窗口,不拖结果
             if entry.progress_tasks:
-                await asyncio.gather(*list(entry.progress_tasks), return_exceptions=True)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*list(entry.progress_tasks), return_exceptions=True),
+                        _PROGRESS_DRAIN_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.debug("progress 回调 %.0fs 未完成, 放弃等待(结果照常交付)",
+                                 _PROGRESS_DRAIN_TIMEOUT)
             return result
         finally:
             self._pending.pop(rid, None)
+            # 非 success 路径（error 帧/异常/取消）与有界等待超时后遗弃的
+            # progress 回调一并取消回收，不留孤儿任务
+            for task in list(entry.progress_tasks):
+                task.cancel()
+            if entry.progress_tasks:
+                await asyncio.gather(*list(entry.progress_tasks), return_exceptions=True)
 
     async def _cancel_quietly(self, req_id: int) -> None:
         try:
