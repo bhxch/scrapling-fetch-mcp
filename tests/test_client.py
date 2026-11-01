@@ -309,11 +309,11 @@ async def test_adapter_retry_after_connection_loss_uses_new_id(tmp_path, patch_e
                 first_id.append(frame["id"])
                 d.abort_connections()  # 不回帧直接掐断:客户端按连接级故障重试
                 return
-            await send(make_response(frame["id"], {"result": "SECOND"}))
-            # 模拟孤儿任务迟到完成：向首个 id 补发响应帧（新实现下无 pending,忽略）
-            if first_id[0] != frame["id"]:
-                await asyncio.sleep(0.05)
+            # 孤儿任务迟到帧在第二请求响应**之前**同步发出：时序由发送顺序
+            # 保证（不靠 sleep），迟到帧先到且必须被忽略（首帧定局/无 pending）
+            if first_id and first_id[0] != frame["id"]:
                 await send(make_response(first_id[0], {"result": "ORPHAN-LATE"}))
+            await send(make_response(frame["id"], {"result": "SECOND"}))
         else:
             await send(make_response(frame["id"], {"status": "ready"}))
 
@@ -342,6 +342,8 @@ async def test_unavailable_maps_to_daemon_unavailable(monkeypatch):
         raise TimeoutError("daemon 未在期限内就绪")
 
     monkeypatch.setattr(client_mod, "ensure_daemon", boom)
+    # 隔离真实 env 解析:不触 daemon 目录解析链的文件系统副作用(mkdir)
+    monkeypatch.setattr(client_mod, "resolve_daemon_env", lambda cli=None: ({}, "deadbeef"))
     c = BackendClient()
     with pytest.raises(BackendError) as excinfo:
         await asyncio.wait_for(c.call("ping", {}, None), 10)
@@ -443,9 +445,8 @@ async def test_watchdog_timeout_sends_cancel(tmp_path, patch_ensure, monkeypatch
     d = FakeDaemon(tmp_path / "d.sock", handler)
     await d.start()
     patch_ensure(d.sock)
-    old_acquire, old_fetch = config.acquire_timeout, config.fetch_timeout
-    config.set_acquire_timeout(0.0)
-    config.set_fetch_timeout(0.0)
+    monkeypatch.setattr(config, "_acquire_timeout", 0.0)  # monkeypatch 自动还原,不直改单例
+    monkeypatch.setattr(config, "_fetch_timeout", 0.0)
     monkeypatch.setattr(client_mod, "_WATCHDOG_SLACK", 0.1)
     c = BackendClient()
     try:
@@ -457,8 +458,6 @@ async def test_watchdog_timeout_sends_cancel(tmp_path, patch_ensure, monkeypatch
         cancel_frame = next(f for f in d.received if f["op"] == "cancel")
         assert cancel_frame["payload"]["cancel_id"] == fetch_frame["id"]
     finally:
-        config.set_acquire_timeout(old_acquire)
-        config.set_fetch_timeout(old_fetch)
         await c.aclose()
         await d.kill()
 
