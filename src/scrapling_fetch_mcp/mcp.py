@@ -200,6 +200,40 @@ def run_server():
         help="Seconds before a single fetch is aborted. Default: 60. "
         "Can also be set via SCRAPLING_FETCH_TIMEOUT environment variable.",
     )
+    parser.add_argument(
+        "--browser-pool",
+        action="store_true",
+        help="启用浏览器会话池，跨请求复用会话以降低启动开销。默认关闭。"
+        "也可通过 SCRAPLING_BROWSER_POOL 环境变量（true/1/yes）设置。",
+    )
+    parser.add_argument(
+        "--pool-idle-ttl",
+        type=float,
+        default=None,
+        help="池中浏览器会话空闲多久后回收（秒）。默认: 300。"
+        "也可通过 SCRAPLING_POOL_IDLE_TTL 环境变量设置。",
+    )
+    parser.add_argument(
+        "--pool-max-age",
+        type=float,
+        default=None,
+        help="池中浏览器会话最长存活时间（秒），到期强制回收。默认: 1800。"
+        "也可通过 SCRAPLING_POOL_MAX_AGE 环境变量设置。",
+    )
+    parser.add_argument(
+        "--pool-max-sessions",
+        type=int,
+        default=None,
+        help="浏览器会话池容量上限。默认: 4。"
+        "也可通过 SCRAPLING_POOL_MAX_SESSIONS 环境变量设置。",
+    )
+    parser.add_argument(
+        "--pool-max-requests",
+        type=int,
+        default=None,
+        help="池中单个浏览器会话服务多少次请求后回收。默认: 50。"
+        "也可通过 SCRAPLING_POOL_MAX_REQUESTS 环境变量设置。",
+    )
     args = parser.parse_args()
 
 
@@ -247,6 +281,17 @@ def run_server():
         config.set_acquire_timeout(args.acquire_timeout)
     if args.fetch_timeout is not None:
         config.set_fetch_timeout(args.fetch_timeout)
+
+    if args.browser_pool:
+        config.set_browser_pool(True)
+    if args.pool_idle_ttl is not None:
+        config.set_pool_idle_ttl(args.pool_idle_ttl)
+    if args.pool_max_age is not None:
+        config.set_pool_max_age(args.pool_max_age)
+    if args.pool_max_sessions is not None:
+        config.set_pool_max_sessions(args.pool_max_sessions)
+    if args.pool_max_requests is not None:
+        config.set_pool_max_requests(args.pool_max_requests)
 
     # Resolve features (merge env raw values + CLI args, call once)
     disable_cli_list = [f.strip() for f in args.disable_features.split(",") if f.strip()]

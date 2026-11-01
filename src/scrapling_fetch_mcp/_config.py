@@ -105,6 +105,15 @@ class Config:
     _acquire_timeout: float = 30.0
     _fetch_timeout: float = 60.0
 
+    # --- Browser pool / daemon ---
+    _browser_pool: bool = False
+    _pool_idle_ttl: float = 300.0
+    _pool_max_age: float = 1800.0
+    _pool_max_sessions: int = 4
+    _pool_max_requests: int = 50
+    _daemon_dir: Optional[Path] = None  # None = platformdirs 默认目录
+    _daemon_idle_timeout: float = 600.0
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -335,6 +344,84 @@ class Config:
         self._fetch_timeout = value
 
     @property
+    def browser_pool(self) -> bool:
+        """Whether browser sessions are pooled and reused across calls"""
+        return self._browser_pool
+
+    def set_browser_pool(self, value: bool) -> None:
+        """Set whether to enable the browser session pool"""
+        self._browser_pool = bool(value)
+
+    @property
+    def pool_idle_ttl(self) -> float:
+        """Seconds an idle pooled browser session survives before teardown"""
+        return self._pool_idle_ttl
+
+    def set_pool_idle_ttl(self, value: float) -> None:
+        """Set the idle time-to-live for pooled browser sessions"""
+        if value < 0:
+            raise ValueError("pool_idle_ttl must be non-negative")
+        self._pool_idle_ttl = value
+
+    @property
+    def pool_max_age(self) -> float:
+        """Max lifetime in seconds for a pooled browser session regardless of activity"""
+        return self._pool_max_age
+
+    def set_pool_max_age(self, value: float) -> None:
+        """Set the maximum age for pooled browser sessions"""
+        if value < 0:
+            raise ValueError("pool_max_age must be non-negative")
+        self._pool_max_age = value
+
+    @property
+    def pool_max_sessions(self) -> int:
+        """Maximum number of browser sessions kept in the pool"""
+        return self._pool_max_sessions
+
+    def set_pool_max_sessions(self, value: int) -> None:
+        """Set the pool size cap"""
+        if value < 1:
+            raise ValueError("pool_max_sessions must be >= 1")
+        self._pool_max_sessions = value
+
+    @property
+    def pool_max_requests(self) -> int:
+        """Requests a pooled browser session serves before being recycled"""
+        return self._pool_max_requests
+
+    def set_pool_max_requests(self, value: int) -> None:
+        """Set the per-session request budget before recycle"""
+        if value < 0:
+            raise ValueError("pool_max_requests must be non-negative")
+        self._pool_max_requests = value
+
+    @property
+    def daemon_dir(self) -> Optional[Path]:
+        """Daemon runtime directory (None = platformdirs default)"""
+        return self._daemon_dir
+
+    def set_daemon_dir(self, path: Path | str | None) -> None:
+        """Set the daemon runtime directory"""
+        if path is None:
+            self._daemon_dir = None
+        elif isinstance(path, str):
+            self._daemon_dir = Path(path)
+        else:
+            self._daemon_dir = path
+
+    @property
+    def daemon_idle_timeout(self) -> float:
+        """Seconds of idleness before the daemon exits"""
+        return self._daemon_idle_timeout
+
+    def set_daemon_idle_timeout(self, value: float) -> None:
+        """Set the daemon idle exit timeout"""
+        if value < 0:
+            raise ValueError("daemon_idle_timeout must be non-negative")
+        self._daemon_idle_timeout = value
+
+    @property
     def enabled_features(self) -> set[str]:
         """Get the set of enabled feature names"""
         return self._enabled_features
@@ -503,5 +590,49 @@ def init_config_from_env() -> None:
     if env_fetch_timeout:
         try:
             config.set_fetch_timeout(float(env_fetch_timeout))
+        except ValueError:
+            pass
+
+    # --- Browser pool / daemon config ---
+    env_browser_pool = getenv("SCRAPLING_BROWSER_POOL", "").lower()
+    if env_browser_pool in ('true', '1', 'yes'):
+        config.set_browser_pool(True)
+
+    env_pool_idle_ttl = getenv("SCRAPLING_POOL_IDLE_TTL", "")
+    if env_pool_idle_ttl:
+        try:
+            config.set_pool_idle_ttl(float(env_pool_idle_ttl))
+        except ValueError:
+            pass
+
+    env_pool_max_age = getenv("SCRAPLING_POOL_MAX_AGE", "")
+    if env_pool_max_age:
+        try:
+            config.set_pool_max_age(float(env_pool_max_age))
+        except ValueError:
+            pass
+
+    env_pool_max_sessions = getenv("SCRAPLING_POOL_MAX_SESSIONS", "")
+    if env_pool_max_sessions:
+        try:
+            config.set_pool_max_sessions(int(env_pool_max_sessions))
+        except ValueError:
+            pass
+
+    env_pool_max_requests = getenv("SCRAPLING_POOL_MAX_REQUESTS", "")
+    if env_pool_max_requests:
+        try:
+            config.set_pool_max_requests(int(env_pool_max_requests))
+        except ValueError:
+            pass
+
+    env_daemon_dir = getenv("SCRAPLING_DAEMON_DIR", "")
+    if env_daemon_dir:
+        config.set_daemon_dir(env_daemon_dir)
+
+    env_daemon_idle_timeout = getenv("SCRAPLING_DAEMON_IDLE_TIMEOUT", "")
+    if env_daemon_idle_timeout:
+        try:
+            config.set_daemon_idle_timeout(float(env_daemon_idle_timeout))
         except ValueError:
             pass
