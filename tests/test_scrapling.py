@@ -354,6 +354,43 @@ class TestBrowserCancelGuard:
             preexisting.wait()
 
     @pytest.mark.asyncio
+    async def test_guard_kills_camoufox_sim_child_within_grace(self):
+        """确定性窗口单测：guard 协程内拉起 argv 含 camoufox-sim 的子进程，
+        取消后断言其在补扫宽限（默认 0.5s）内被 SIGKILL。不依赖真 camoufox，
+        端到端验证"取消落在浏览器启动窗口不留孤儿"的兜底链路。
+        """
+        started = asyncio.Event()
+        holder: dict = {}
+
+        async def spawn_and_hang():
+            started.set()
+            holder["proc"] = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)", "camoufox-sim"]
+            )
+            await asyncio.sleep(30)  # 取消落在这里,子进程故意不收尾
+
+        task = asyncio.create_task(scrapling_mod._browser_cancel_guard(spawn_and_hang))
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            # 等子进程 exec 完成并出现在 /proc(首/补两轮清扫总有一轮命中)
+            deadline = time.monotonic() + 5
+            while holder["proc"].pid not in scrapling_mod._process_tree():
+                if time.monotonic() > deadline:
+                    pytest.fail("camoufox-sim 子进程未出现在 /proc")
+                await asyncio.sleep(0.02)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+            assert _pid_gone(holder["proc"].pid), "浏览器样子进程未被清扫击杀"
+            assert scrapling_mod._INFLIGHT_BROWSER_FETCHES == 0
+        finally:
+            proc = holder.get("proc")
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+            if proc is not None:
+                proc.wait()
+
+    @pytest.mark.asyncio
     async def test_guard_reraises_and_sweeps(self):
         # 取消路径:清扫后 CancelledError 原样传播(取消必须继续传播)
         async def boom():
