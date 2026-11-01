@@ -12,8 +12,9 @@ response/error/progress 帧分发回等待者：
   ``ensure_daemon`` → 最多重试 :data:`_MAX_RETRIES` 次；仍失败抛
   ``BackendError("DAEMON_UNAVAILABLE", 排查指引)``。应用层 error 帧
   不重试，直接映射 ``BackendError(code, message)``。
-- **看门狗**：单请求限时 ``acquire_timeout + fetch_timeout + 60s``，超时
-  发 cancel 帧后抛 ``BackendError("DAEMON_TIMEOUT", ...)``。
+- **看门狗**：单请求限时 ``acquire_timeout + fetch_timeout + 60s``（每请求
+  一个总窗，call 进入时定死 deadline；连接级故障重试共享剩余预算，重试不
+  重置窗口），超时发 cancel 帧后抛 ``BackendError("DAEMON_TIMEOUT", ...)``。
 - **取消**：``call`` 的调用方任务被取消时由 :func:`make_adapter` 负责
   发 cancel 帧再 re-raise（取消必须继续传播）。重试每次尝试换新请求 id，
   adapter 经 :class:`ActiveCall` 句柄取「当前生效 id」发 cancel——预分配
@@ -65,7 +66,7 @@ logger = logging.getLogger("scrapling_fetch_mcp.client")
 _STREAM_LIMIT = 64 * 1024 * 1024
 # ensure_daemon 的就绪期限（秒）：daemon 冷启动（拉进程+初始化）的宽限。
 _ENSURE_TIMEOUT = 60.0
-# 看门狗松弛项：单请求限时 = acquire_timeout + fetch_timeout + 该值（spec 定值）。
+# 看门狗松弛项：单请求总窗 = acquire_timeout + fetch_timeout + 该值（spec 定值）。
 _WATCHDOG_SLACK = 60.0
 # cancel 帧 / 取消收尾的发送期限：尽力而为，超时即放弃（不拦取消传播）。
 _CANCEL_TIMEOUT = 2.0
@@ -203,10 +204,13 @@ class BackendClient:
         rid = self.next_id() if req_id is None else req_id  # 首尝试 id
         if active is not None:
             active.req_id = rid
+        # 看门狗总窗在 call 进入时定死：连接级故障重试共享剩余预算，重试
+        # 不重置窗口——总耗时上限与单次尝试一致，不因重试而翻倍
+        deadline = asyncio.get_running_loop().time() + self._watchdog_window()
         for _attempt in range(_MAX_RETRIES + 1):
             try:
                 await self._ensure_connected()
-                return await self._transact(op, payload, ctx, rid)
+                return await self._transact(op, payload, ctx, rid, deadline)
             except (_ConnectionLost, OSError, TimeoutError) as exc:
                 # BackendError/CancelledError 不在此列：前者不重试,后者必须传播
                 last = exc
@@ -373,25 +377,32 @@ class BackendClient:
 
     # ---------- 单请求事务 ----------
 
-    def _watchdog_timeout(self) -> float:
+    def _watchdog_window(self) -> float:
+        """单请求看门狗总窗时长：acquire_timeout + fetch_timeout + 松弛项。
+
+        总窗在 ``call`` 进入时一次性换算成 deadline，各次尝试只消费剩余
+        预算——重试不重置窗口。
+        """
         from scrapling_fetch_mcp._config import config  # 延迟 import:不牵入配置链(同 paths)
 
         return config.acquire_timeout + config.fetch_timeout + _WATCHDOG_SLACK
 
-    async def _transact(self, op: str, payload: dict, ctx: Any, req_id: int | None) -> dict:
+    async def _transact(self, op: str, payload: dict, ctx: Any, req_id: int | None,
+                        deadline: float) -> dict:
         rid = self.next_id() if req_id is None else req_id
         entry = _Pending(asyncio.get_running_loop().create_future(), ctx)
         self._pending[rid] = entry
         try:
             await self._send_frame(make_request(op, payload, self._token, rid, self._pkg))
-            timeout = self._watchdog_timeout()
+            timeout = deadline - asyncio.get_running_loop().time()  # 剩余预算(重试共享)
             try:
                 result = await asyncio.wait_for(entry.future, timeout)
             except asyncio.TimeoutError:
                 await self._cancel_quietly(rid)
                 raise BackendError(
                     CODE_TIMEOUT,
-                    f"请求 {timeout:.0f}s 内未完成(acquire+fetch+60s 看门狗), 已发 cancel 帧取消",
+                    f"请求 {max(timeout, 0.0):.0f}s 内未完成(acquire+fetch+60s 看门狗), "
+                    "已发 cancel 帧取消",
                 ) from None
             # 先等 progress 回调落地再返回结果：保证顺序语义（进度先于完成）；
             # 交付是尽力而为——卡死的回调最多拖满有界窗口,不拖结果
@@ -444,7 +455,7 @@ def _normalize_scraping_dir(op: str, params: dict[str, Any]) -> None:
     前端 cwd 即用户 cwd：缺省/空值注入 ``config.scraping_dir`` 的绝对值，
     显式传入值就地 ``expanduser().resolve()``，与 0.2.x 前端直跑语义一致。
     仅 fetch_page 的 wrapper 接受该形参（注入他 op 会触发 payload 键校验
-    拒绝）；``_config`` 函数内延迟 import（同 ``_watchdog_timeout``）。
+    拒绝）；``_config`` 函数内延迟 import（同 ``_watchdog_window``）。
     """
     if op != "fetch_page":
         return

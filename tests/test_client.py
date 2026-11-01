@@ -463,6 +463,92 @@ async def test_watchdog_timeout_sends_cancel(tmp_path, patch_ensure, monkeypatch
         await d.kill()
 
 
+@pytest.mark.asyncio
+async def test_watchdog_deadline_shared_across_retries(tmp_path, patch_ensure, monkeypatch):
+    """看门狗按每请求总窗计：重试共享预算，不因连接级故障重试而重置窗口。
+
+    总窗 0.6s：首尝试慢速失败消耗 0.3s，二尝试挂死后看门狗应在进入后约
+    0.6s 触发——旧实现每次尝试各给 0.6s，会拖到 0.9s 之外。
+    """
+    from scrapling_fetch_mcp._config import config
+
+    attempts = {"n": 0}
+    cancel_seen = asyncio.Event()
+
+    async def handler(frame: dict, send) -> None:
+        if frame["op"] == "fetch_page":
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                await asyncio.sleep(0.3)  # 首尝试:慢速失败,消耗总窗预算
+                d.abort_connections()
+                return
+            await asyncio.sleep(30)  # 二尝试挂死:等看门狗触发
+        elif frame["op"] == "cancel":
+            cancel_seen.set()
+            await send(make_response(frame["id"], {"cancelled": True}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)
+    old_acquire, old_fetch = config.acquire_timeout, config.fetch_timeout
+    config.set_acquire_timeout(0.0)
+    config.set_fetch_timeout(0.0)
+    monkeypatch.setattr(client_mod, "_WATCHDOG_SLACK", 0.6)  # 总窗 0.6s
+    c = BackendClient()
+    try:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        with pytest.raises(BackendError) as excinfo:
+            await c.call("fetch_page", {"url": "u"}, None)
+        elapsed = loop.time() - start
+        assert excinfo.value.code == "DAEMON_TIMEOUT"
+        assert elapsed < 0.75  # 总窗语义(旧的重置窗口语义会 >= 0.9)
+        assert attempts["n"] >= 2  # 确实发生过重试
+        await asyncio.wait_for(cancel_seen.wait(), 5)  # 超时后发了 cancel 帧
+    finally:
+        config.set_acquire_timeout(old_acquire)
+        config.set_fetch_timeout(old_fetch)
+        await c.aclose()
+        await d.kill()
+
+
+@pytest.mark.asyncio
+async def test_watchdog_window_allows_fast_retries_to_succeed(tmp_path, patch_ensure, monkeypatch):
+    """总窗内两次快速连接失败后第三次成功：剩余预算照常交付结果。"""
+    from scrapling_fetch_mcp._config import config
+
+    attempts = {"n": 0}
+
+    async def handler(frame: dict, send) -> None:
+        if frame["op"] == "fetch_page":
+            attempts["n"] += 1
+            if attempts["n"] <= 2:
+                d.abort_connections()  # 快速连接级失败,几乎不耗预算
+                return
+            await send(make_response(frame["id"], {"result": "THIRD-OK"}))
+
+    d = FakeDaemon(tmp_path / "d.sock", handler)
+    await d.start()
+    patch_ensure(d.sock)
+    old_acquire, old_fetch = config.acquire_timeout, config.fetch_timeout
+    config.set_acquire_timeout(0.0)
+    config.set_fetch_timeout(0.0)
+    monkeypatch.setattr(client_mod, "_WATCHDOG_SLACK", 1.0)  # 总窗 1.0s
+    c = BackendClient()
+    try:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        resp = await asyncio.wait_for(c.call("fetch_page", {"url": "u"}, None), 5)
+        assert resp["result"] == "THIRD-OK"
+        assert attempts["n"] == 3  # 三次尝试全部发生在同一总窗内
+        assert loop.time() - start < 1.0
+    finally:
+        config.set_acquire_timeout(old_acquire)
+        config.set_fetch_timeout(old_fetch)
+        await c.aclose()
+        await d.kill()
+
+
 # ---------- 7. adapter 错误映射 ----------
 
 @pytest.mark.asyncio
