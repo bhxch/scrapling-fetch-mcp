@@ -237,6 +237,18 @@ def test_page_cache_max_entries_zero_disables_cache():
     assert cache.get("u", "basic") is None
     assert cache._cache == {}
 
+def test_page_cache_live_key_update_no_eviction():
+    """满缓存下更新已存在 live key:不逐出任何条目,且该 key 移到末尾"""
+    cache = PageCache(ttl_seconds=300, max_entries=3)
+    for i in range(3): cache.set(f"u{i}", "basic", f"c{i}")
+    cache.set("u0", "basic", "c0-new")      # 更新 live key:计数不变,不触发逐出
+    assert len(cache._cache) == 3
+    assert list(cache._cache) == ["basic:u1", "basic:u2", "basic:u0"]
+    assert cache.get("u0", "basic") == "c0-new"
+    cache.set("u3", "basic", "c3")          # 只有新条目才逐出最旧(此时是 u1)
+    assert cache.get("u1", "basic") is None
+    assert cache.get("u3", "basic") == "c3"
+
 def test_page_cache_evicts_expired_before_fifo():
     cache = PageCache(ttl_seconds=0, max_entries=2)   # ttl=0 → 立即过期
     cache.set("a", "basic", "1"); cache.set("b", "basic", "2")

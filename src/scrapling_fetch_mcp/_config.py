@@ -53,6 +53,9 @@ class PageCache:
         if self._max_entries <= 0:
             return  # 0 = 禁用缓存，而非"保留 1 条"
         key = self._make_key(url, mode)
+        # 已存在 key 的更新先弹出再插入：刷新时间戳并移到末尾（dict 保序），
+        # 计数不变、不触发逐出——满缓存下刷新热点页不应把别的条目挤掉
+        self._cache.pop(key, None)
         # 条目上限：先清过期，再按插入序（dict 保序）逐出最旧，直至容纳新条目
         self.clear_expired()
         while self._cache and len(self._cache) >= self._max_entries:
