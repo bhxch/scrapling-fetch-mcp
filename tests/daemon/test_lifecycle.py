@@ -41,12 +41,21 @@ CONFIG_HASH_KEY = "SCRAPLING_DAEMON_CONFIG_HASH"
 
 
 def _reset_daemon_config() -> None:
-    """重置配置单例的 daemon 字段后从 env 重新加载（沿用 tests/test_config.py 手法）。"""
+    """重置配置单例的 daemon 字段后从 env 重新加载（沿用 tests/test_config.py 手法）。
+
+    daemon-owned 的类级可变字段一并回默认：单例是进程级全局，其他测试文件
+    经 setter 留下的值不随其 monkeypatch 还原，init_config_from_env 对未设
+    env 的键也不覆写——不显式重置会让本文件用例对 teardown 顺序产生隐性
+    依赖（如 browser_pool 残留开启时 status 行为漂移）。
+    """
     from scrapling_fetch_mcp._config import Config, init_config_from_env
 
     cfg = Config()  # Config.__new__ 返回单例,改它即改全局
     cfg._daemon_dir = None
     cfg._daemon_idle_timeout = 600.0
+    for attr in ("_min_mode", "_browser_pool", "_pool_idle_ttl", "_pool_max_age",
+                 "_pool_max_sessions", "_pool_max_requests"):
+        setattr(cfg, attr, getattr(Config, attr))  # 类级属性即出厂默认
     init_config_from_env()
 
 
