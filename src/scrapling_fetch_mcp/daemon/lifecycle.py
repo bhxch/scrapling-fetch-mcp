@@ -50,7 +50,9 @@ __all__ = [
     "ensure_daemon",
     "is_alive",
     "ping",
+    "read_lock",
     "socket_name",
+    "transact",
 ]
 
 # spawn 的目标模块。模块级常量便于测试注入假 worker（monkeypatch 本名字）。
@@ -73,7 +75,7 @@ def daemon_sockets() -> list[Path]:
     return sorted(daemon_dir().glob("daemon-*.sock"))
 
 
-# ---------- ping ----------
+# ---------- ping / 管理面请求 ----------
 
 def _transact(sock: Path, payload: bytes, connect_timeout: float, response_timeout: float) -> dict | None:
     """连接、发一帧、收一帧响应；任何失败（连接/超时/非成功帧/坏帧）返回 None。"""
@@ -102,15 +104,27 @@ def _transact(sock: Path, payload: bytes, connect_timeout: float, response_timeo
     return frame
 
 
+def transact(sock: Path, op: str, token: str, *, payload: dict | None = None,
+             timeout: float = 5.0) -> dict | None:
+    """向 daemon 发一帧指定 op 的请求并等响应（管理 CLI 的 status/shutdown 用）。
+
+    token 取自目标 daemon 自己的 lock 文件，与普通请求同一鉴权；连接失败/
+    超时/非成功帧一律返回 None（活 daemon 对 ping/status/shutdown 均内联
+    即时应答，5s 无响应即可判定已死）。
+    """
+    return _transact(sock, make_request(op, payload or {}, token, 0, pkg_version()),
+                     timeout, timeout)
+
+
 def ping(sock: Path, token: str, timeout: float = 5.0) -> dict | None:
     """向 daemon socket 发 ping 并返回响应帧；失败返回 None（管理 CLI/测试用）。"""
-    return _transact(sock, make_request(OP_PING, {}, token, 0, pkg_version()), timeout, timeout)
+    return transact(sock, OP_PING, token, timeout=timeout)
 
 
 # ---------- 存活判定 ----------
 
-def _read_lock(sock: Path) -> dict | None:
-    """读 sock 同名 ``.lock``；缺失/坏 JSON/非 object 一律 None。"""
+def read_lock(sock: Path) -> dict | None:
+    """读 sock 同名 ``.lock``；缺失/坏 JSON/非 object 一律 None（管理 CLI 用）。"""
     try:
         info = json.loads(sock.with_suffix(".lock").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -140,7 +154,7 @@ def is_alive(sock: Path, expect_pkg: str, expect_hash: str) -> bool:
     响应 5s 内成功；应答 result 自报的 ``pkg``/``config_hash`` 与期望一致
     （不符说明 socket 是旧版本/旧配置的陈旧残留）。
     """
-    info = _read_lock(sock)
+    info = read_lock(sock)
     if info is None or not _pid_alive(info.get("pid")):
         return False
     resp = _transact(sock, make_request(OP_PING, {}, str(info.get("token") or ""), 0, pkg_version()),

@@ -1,5 +1,8 @@
+import sys
+import time
 from argparse import ArgumentParser
 from logging import getLogger
+from pathlib import Path
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
@@ -16,6 +19,9 @@ from scrapling_fetch_mcp._features import (
 from scrapling_fetch_mcp._skills import SKILL_URI, build_extension
 from scrapling_fetch_mcp._tool_factory import build_tool_function
 from scrapling_fetch_mcp.daemon.config_env import resolve_daemon_env
+from scrapling_fetch_mcp.daemon.lifecycle import daemon_sockets, read_lock, socket_name, transact
+from scrapling_fetch_mcp.daemon.paths import daemon_dir
+from scrapling_fetch_mcp.daemon.protocol import OP_SHUTDOWN, OP_STATUS
 
 _skill_extension = build_extension()
 
@@ -57,8 +63,131 @@ def _register_tool(name, param_configs, base_docstring, impl_func):
     mcp.tool()(func)
 
 
+# ---------------------------------------------------------------- daemon 管理 CLI
+
+# 发出 shutdown 后等待 daemon 退出的期限。worker 对 status/shutdown 一律
+# 内联即时应答，5s 无响应即视为已死（与 lifecycle.transact 的默认超时一致）。
+_SHUTDOWN_EXIT_WAIT = 5.0
+
+
+def _fmt(value: object) -> str:
+    """表格单元格：None → "-"。"""
+    return "-" if value is None else str(value)
+
+
+def _daemon_status() -> int:
+    """清点 daemon 目录下全部 socket，表格输出；恒返回 0。
+
+    每个 socket：读 lock 取 token → 发 status 请求（同一鉴权）；无 lock 或
+    5s 无响应即标 DEAD（进程已死的 sock/lock 残留），表尾提示 `shutdown --all`
+    清场。
+    """
+    socks = daemon_sockets()
+    if not socks:
+        print("无存活 daemon")
+        return 0
+    print(
+        f"{'SOCKET':<44} {'PKG':<8} {'HASH':<8} {'PID':>7} "
+        f"{'UPTIME':>9} {'CLIENTS':>7} {'CACHE':>6}  STATUS"
+    )
+    any_dead = False
+    for sock in socks:
+        lock = read_lock(sock) or {}
+        resp = transact(sock, OP_STATUS, str(lock.get("token") or ""))
+        if resp is None:
+            any_dead = True
+            print(
+                f"{sock.name:<44} {_fmt(lock.get('pkg')):<8} {_fmt(lock.get('config_hash')):<8} "
+                f"{_fmt(lock.get('pid')):>7} {'-':>9} {'-':>7} {'-':>6}  DEAD"
+            )
+            continue
+        r = resp.get("result") or {}
+        print(
+            f"{sock.name:<44} {_fmt(r.get('pkg')):<8} {_fmt(r.get('config_hash')):<8} "
+            f"{_fmt(r.get('pid')):>7} {_fmt(r.get('uptime_s')):>9} "
+            f"{_fmt(r.get('clients')):>7} {_fmt(r.get('cache_entries')):>6}  ready"
+        )
+    if any_dead:
+        print("存在失效 socket（进程已死但 sock/lock 残留），执行 `daemon shutdown --all` 可清理")
+    return 0
+
+
+def _shutdown_socket(sock: Path) -> bool:
+    """停掉单个 socket 指向的 daemon；返回是否处理成功。
+
+    正常路径：lock 取 token → shutdown 请求 → 轮询等待 sock 消失（worker
+    退出时统一清理 lock 与 sock）。无 lock/5s 无响应：活 daemon 不可能超时，
+    按死残留直接清理 sock/lock（`--all` 清场的兜底语义）。
+    """
+    lock = read_lock(sock)
+    resp = None if lock is None else transact(sock, OP_SHUTDOWN, str(lock.get("token") or ""))
+    if resp is None:
+        for path in (sock, sock.with_suffix(".lock")):
+            try:
+                path.unlink()
+            except OSError:
+                pass  # 已被并发清理等;清理尽力而为
+        print(f"{sock.name}: 无响应, 已清理残留 sock/lock")
+        return True
+    deadline = time.monotonic() + _SHUTDOWN_EXIT_WAIT
+    while sock.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if sock.exists():
+        print(f"{sock.name}: 已接受退出请求但超时未退出", file=sys.stderr)
+        return False
+    return True
+
+
+def _daemon_shutdown(args) -> int:
+    """shutdown 分支：--all 清场 / --socket 定点 / 默认仅当前版本+配置。"""
+    if args.all:
+        socks = daemon_sockets()
+        if not socks:
+            print("无存活 daemon")
+            return 0
+        return 0 if all(_shutdown_socket(sock) for sock in socks) else 1
+    if args.socket:
+        name = args.socket.removesuffix(".sock")
+        sock = daemon_dir() / f"{name}.sock"
+    else:
+        _spawn_env, config_hash = resolve_daemon_env()
+        sock = daemon_dir() / f"{socket_name(config_hash)}.sock"
+    if not sock.exists():
+        print(f"未找到目标 daemon: {sock.name}")
+        return 1
+    return 0 if _shutdown_socket(sock) else 1
+
+
+def _daemon_main(argv: list[str]) -> int:
+    """``daemon status|shutdown`` 子命令入口；返回进程退出码。
+
+    独立 ArgumentParser，不与 MCP 参数共享命名空间。status 恒退出 0；
+    shutdown 找不到目标退出 1。
+    """
+    parser = ArgumentParser(
+        prog="scrapling-fetch-mcp daemon",
+        description="管理后台抓取 daemon（status 查看 / shutdown 停止）",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status", help="表格列出全部 daemon（版本/配置/pid/缓存）")
+    sp = sub.add_parser("shutdown", help="停止 daemon（默认仅当前版本+配置）")
+    group = sp.add_mutually_exclusive_group()
+    group.add_argument("--all", action="store_true",
+                       help="停止全部 daemon 并清理残留（含其他版本/配置）")
+    group.add_argument("--socket", metavar="SOCK",
+                       help="只处理指定 socket 名（可带 .sock 后缀）")
+    args = parser.parse_args(argv)
+    if args.command == "status":
+        return _daemon_status()
+    return _daemon_shutdown(args)
+
+
 def run_server():
     """Parse CLI arguments and start the MCP server"""
+    # `daemon` 管理子命令分流：在 MCP 参数解析前拦截，处理完即退出，MCP 路径零改动
+    if sys.argv[1:2] == ["daemon"]:
+        sys.argv.pop(1)
+        sys.exit(_daemon_main(sys.argv[1:]))
     global mcp
     parser = ArgumentParser(
         description="Scrapling Fetch MCP Server - Fetch web content with bot-detection avoidance"
