@@ -308,7 +308,7 @@ class DaemonWorker:
                     # （上限内的坏帧走 _process_line 的错误应答，连接存活）
                     logger.warning("单帧超过 %d 字节上限, 断开连接", STREAM_LIMIT)
                     break
-                response = await self._process_line(line, send, ops)
+                response = await self._process_line(line, send, ops, own_handle=True)
                 if response is not None:
                     await send(response)
         except (ConnectionError, OSError):
@@ -325,23 +325,27 @@ class DaemonWorker:
             except (ConnectionError, OSError):
                 pass
 
-    async def _process_line(self, line: bytes, send, ops: set) -> bytes | None:
+    async def _process_line(self, line: bytes, send, ops: set, *,
+                            own_handle: bool = False) -> bytes | None:
         """解析并分派一帧；任何异常都折成错误帧，绝不让坏帧击穿读循环。
 
         宽兜底 ``Exception`` 是承重的：深嵌套 JSON 可令 ``json.loads`` 抛
         ``RecursionError``（不是 ``ProtocolError`` 子类），不接住会杀死连接。
-        ``ops`` 收集分发出的 cancel op 任务（读循环取消时反向取消它们）。
+        ``ops`` 收集分发出的 cancel op 任务（读循环取消时反向取消它们）；
+        ``own_handle`` 表示请求来自本连接（ping/status 的 clients 计数据此
+        排除发起方自身）。
         """
         try:
             frame = parse_frame(line)
-            return await self._dispatch(frame, send, ops)
+            return await self._dispatch(frame, send, ops, own_handle=own_handle)
         except ProtocolError as exc:
             return make_error(0, E_BAD_FRAME, str(exc))
         except Exception as exc:  # noqa: BLE001  见 docstring：兜底即本函数的存在理由
             logger.warning("帧处理异常, 按 internal 错误应答: %r", exc)
             return make_error(0, E_INTERNAL, f"帧处理失败: {exc}")
 
-    async def _dispatch(self, frame: dict, send, ops: set) -> bytes | None:
+    async def _dispatch(self, frame: dict, send, ops: set, *,
+                        own_handle: bool = False) -> bytes | None:
         """op 路由。fetch/cancel 返回 None（响应由独立任务按 id 多路复用发出）。"""
         req_id = frame.get("id", 0)
         token = frame.get("token")
@@ -350,9 +354,9 @@ class DaemonWorker:
         op = frame.get("op")
         payload = frame.get("payload")
         if op == OP_PING:
-            return make_response(req_id, self._ping_result())
+            return make_response(req_id, self._ping_result(exclude_self=own_handle))
         if op == OP_STATUS:
-            return make_response(req_id, self._status_result())
+            return make_response(req_id, self._status_result(exclude_self=own_handle))
         if op == OP_CANCEL:
             # 独立任务分发：5s 宽限等待绝不阻塞读循环（同连接的 ping/status
             # 必须即时应答）。响应由任务完成后经 _safe_send 发出。
@@ -378,25 +382,27 @@ class DaemonWorker:
 
     # ---------- op 实现 ----------
 
-    def _identity(self) -> dict:
+    def _identity(self, *, exclude_self: bool = False) -> dict:
         return {
             "pid": os.getpid(),
             "pkg": pkg_version(),
             "config_hash": self._config_hash,
             "uptime_s": round(time.monotonic() - self._started, 3),
-            "clients": self._clients,
+            # 应答携带者即请求发起连接：clients 报"其他"连接数，避免单连接
+            # 探活时自报 1 让前端误判忙碌
+            "clients": self._clients - 1 if exclude_self else self._clients,
         }
 
-    def _ping_result(self) -> dict:
-        return {"status": "ready", **self._identity()}
+    def _ping_result(self, *, exclude_self: bool = False) -> dict:
+        return {"status": "ready", **self._identity(exclude_self=exclude_self)}
 
-    def _status_result(self) -> dict:
+    def _status_result(self, *, exclude_self: bool = False) -> dict:
         _effective_mode, degradation = resolve_stealth_degradation("stealth")
         # 浏览器池统计：默认关（None）；开启时惰性构造空池 harmless——
         # 只有 fetch 才拉浏览器，stats 报零值即"池已启用尚无会话"
         pool_stats = _scrapling.get_pool().stats() if config.browser_pool else None
         return {
-            **self._identity(),
+            **self._identity(exclude_self=exclude_self),
             # PageCache 未暴露公开 size；暂以内部 _cache 计数披露
             "cache_entries": len(config.cache._cache),  # noqa: SLF001
             "stealth_ready": _effective_mode == "stealth",

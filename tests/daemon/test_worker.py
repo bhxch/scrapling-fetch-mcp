@@ -529,6 +529,23 @@ async def test_status_pool_stats_when_browser_pool_enabled(tmp_path, monkeypatch
     assert resp["result"]["pool"] == fake_stats
 
 
+@pytest.mark.asyncio
+async def test_ping_status_clients_exclude_own_connection(tmp_path):
+    """ping/status 的 clients 计数排除发起本请求的连接（探活不自报忙碌）。"""
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c1:
+            async with Client(h.sock) as c2:
+                r1 = await c1.request(OP_PING, {}, h.worker.token, 1)
+                r2 = await c2.request(OP_PING, {}, h.worker.token, 2)
+                s1 = await c1.request(OP_STATUS, {}, h.worker.token, 3)
+            # c2 已断开且服务端已计数归位后:只剩 c1 自身 → clients==0
+            r3 = await c1.request(OP_PING, {}, h.worker.token, 4)
+    assert r1["result"]["clients"] == 1
+    assert r2["result"]["clients"] == 1
+    assert s1["result"]["clients"] == 1
+    assert r3["result"]["clients"] == 0
+
+
 # ---------- 空闲退出 / shutdown ----------
 
 @pytest.mark.asyncio
