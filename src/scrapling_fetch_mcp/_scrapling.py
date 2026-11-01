@@ -191,7 +191,13 @@ async def _browser_cancel_guard(coro_factory: Callable[[], Any]) -> Any:
         _INFLIGHT_BROWSER_FETCHES -= 1
         if _INFLIGHT_BROWSER_FETCHES == 0:  # 最后一个离开者才清扫
             _kill_spawned_browsers(before)
-            await asyncio.sleep(_KILL_RESWEEP_DELAY)
+            try:
+                # shield 包裹补扫睡眠：第二次 cancel 恰落在睡眠窗内时只吞掉
+                # 这一次（补扫 await 被打断会让启动期 fork 的子进程漏杀——
+                # 双重清扫是本兜底的存在理由），补扫照常执行后原样 re-raise
+                await asyncio.shield(asyncio.sleep(_KILL_RESWEEP_DELAY))
+            except asyncio.CancelledError:
+                pass
             _kill_spawned_browsers(before)
         raise
     except BaseException:

@@ -432,6 +432,35 @@ class TestBrowserCancelGuard:
         assert scrapling_mod._INFLIGHT_BROWSER_FETCHES == 0
 
     @pytest.mark.asyncio
+    async def test_guard_resweep_survives_second_cancel_in_sleep(self, monkeypatch):
+        """I4 回归：第二次 cancel 落在补扫睡眠窗内，补扫仍必须执行。
+
+        补扫睡眠是未保护 await，旧实现下二次取消从此穿透 → 漏掉补杀轮，
+        启动期 fork 的浏览器子进程逃过清扫。
+        """
+        killed: list[set] = []
+        monkeypatch.setattr(
+            scrapling_mod, "_kill_spawned_browsers",
+            lambda before: killed.append(before) or 0,
+        )
+        monkeypatch.setattr(scrapling_mod, "_KILL_RESWEEP_DELAY", 0.2)
+        started = asyncio.Event()
+
+        async def hang_until_cancel():
+            started.set()
+            await asyncio.sleep(30)  # 取消落在这里
+
+        task = asyncio.create_task(scrapling_mod._browser_cancel_guard(hang_until_cancel))
+        await asyncio.wait_for(started.wait(), 5)
+        task.cancel()  # 第一次取消:进入清扫 + 补扫睡眠
+        await asyncio.sleep(0.05)  # 确保已进入补扫睡眠窗
+        task.cancel()  # 第二次取消:恰落在睡眠窗内
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(killed) == 2  # 首轮 + 补扫都被执行,补扫未被跳过
+        assert scrapling_mod._INFLIGHT_BROWSER_FETCHES == 0
+
+    @pytest.mark.asyncio
     async def test_guard_counter_reset_on_non_cancel_exception(self, monkeypatch):
         """普通异常路径不清扫但计数必须归零（BaseException 分支）。"""
         monkeypatch.setattr(
