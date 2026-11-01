@@ -75,6 +75,9 @@ _ACTIVE_POLL = 0.05
 CANCEL_GRACE = 5.0
 # 退出时等待 in-flight fetch 任务收尾的期限；挂死任务交给进程退出兜底。
 _EXIT_TASK_GRACE = 2.0
+# 退出时等待 pool.close_all 的宽限；Firefox close 挂死时转 OS 层击杀兜底，
+# daemon 必须能退出（spec 反目标：daemon 泄漏、lock/sock 永不清理）。
+_CLOSE_ALL_GRACE = 5.0
 # 并发限流错误码（前端映射回限流文案）。
 CONCURRENCY_LIMIT_CODE = "CONCURRENCY_LIMIT"
 
@@ -245,11 +248,21 @@ class DaemonWorker:
             await asyncio.wait(list(self._tasks.values()), timeout=_EXIT_TASK_GRACE)
         # 浏览器池收口（spec §6.2：daemon 退出不留池化浏览器）。放在任务
         # 收尾之后——无在飞 fetch 时 close_all 才安全。仅当池已惰性构造过
-        # 才关（默认关时 _pool 为 None，零开销）。
+        # 才关（默认关时 _pool 为 None，零开销）。限时宽限：Firefox close
+        # 挂死会让无时限的 await 永不返回，daemon 泄漏、lock/sock 永不删；
+        # 超时转 _kill_spawned_browsers SIGKILL 全部浏览器后代后照常清理。
         pool = getattr(_scrapling, "_pool", None)
         if pool is not None:
             try:
-                await pool.close_all()
+                await asyncio.wait_for(pool.close_all(), _CLOSE_ALL_GRACE)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "浏览器池收口超过 %.1fs 未完成, 转杀残留浏览器进程后退出",
+                    _CLOSE_ALL_GRACE,
+                )
+                # 快照传空集=击杀现存的全部浏览器后代（daemon 是自身进程组长,
+                # 后代必为它自己拉起的浏览器/驱动; 测试进程内 monkeypatch 之）
+                _scrapling._kill_spawned_browsers(set())
             except Exception:  # noqa: BLE001  退出路径关闭失败不阻断清锁删 sock
                 logger.warning("浏览器池收口失败", exc_info=True)
         for path in (self._lock_path, self._sock):

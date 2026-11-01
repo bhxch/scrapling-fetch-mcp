@@ -522,6 +522,39 @@ async def test_cleanup_closes_pool_when_constructed(tmp_path, monkeypatch):
     assert fake.closed == 1
 
 
+@pytest.mark.asyncio
+async def test_cleanup_pool_close_hang_falls_back_to_kill(tmp_path, monkeypatch):
+    """I2 回归：close_all 挂死 → 限时转 _kill_spawned_browsers，lock/sock 照常清理。
+
+    无时限的 await pool.close_all() 会被 Firefox close 挂死拖成 daemon 永不
+    退出（lock/sock 残留）。宽限耗尽后 SIGKILL 浏览器后代再继续退出路径。
+    """
+    from scrapling_fetch_mcp import _scrapling
+
+    class HangPool:
+        async def close_all(self):
+            await asyncio.Event().wait()  # 永不完成（模拟 Firefox close 挂死）
+
+    killed: list[set] = []
+
+    def fake_kill(before):
+        killed.append(before)
+        return 0
+
+    monkeypatch.setattr(_scrapling, "_kill_spawned_browsers", fake_kill)
+    monkeypatch.setattr(_scrapling, "_pool", HangPool())
+    monkeypatch.setattr(worker_mod, "_CLOSE_ALL_GRACE", 0.1)
+    sock = tmp_path / "w3.sock"
+    sock.write_bytes(b"")
+    sock.with_suffix(".lock").write_text("{}")
+    w = worker_mod.DaemonWorker(sock, 30.0, config_hash="ab")
+    # 若无超时保护,本 wait_for 会超时炸出（测试即失败）
+    await asyncio.wait_for(w._cleanup(), 5.0)
+    assert killed == [set()]  # 退出路径击杀现存全部浏览器后代
+    assert not sock.exists()
+    assert not sock.with_suffix(".lock").exists()
+
+
 # ---------- __main__ 入口 ----------
 
 def test_main_rejects_windows(monkeypatch):
