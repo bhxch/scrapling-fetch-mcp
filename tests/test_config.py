@@ -1,7 +1,21 @@
 """Tests for configuration"""
 import pytest
 from pathlib import Path
-from scrapling_fetch_mcp._config import Config, config, init_config_from_env
+from scrapling_fetch_mcp._config import (
+    Config,
+    PageCache,
+    config,
+    init_config_from_env,
+)
+
+
+def _fresh_config() -> Config:
+    """重置配置单例的缓存相关字段后返回单例（沿用本文件的单例重置手法）"""
+    cfg = Config()
+    cfg._cache_ttl = 300
+    cfg._cache = None
+    cfg._cache_max_entries = 256
+    return cfg
 
 
 class TestConfig:
@@ -207,3 +221,23 @@ class TestJinaArbitrationConfig:
         monkeypatch.setenv("SCRAPLING_JINA_MIN_CHARS", "not-a-number")
         init_config_from_env()
         assert config.jina_min_chars == 500
+
+
+def test_page_cache_max_entries_fifo_eviction():
+    cache = PageCache(ttl_seconds=300, max_entries=3)
+    for i in range(3): cache.set(f"u{i}", "basic", f"c{i}")
+    cache.set("u3", "basic", "c3")          # 满:先 clear_expired 再 FIFO 逐出 u0
+    assert cache.get("u0", "basic") is None
+    assert cache.get("u3", "basic") == "c3"
+
+def test_page_cache_evicts_expired_before_fifo():
+    cache = PageCache(ttl_seconds=0, max_entries=2)   # ttl=0 → 立即过期
+    cache.set("a", "basic", "1"); cache.set("b", "basic", "2")
+    cache.set("c", "basic", "3")            # 全部已过期,应清空而非逐出
+    assert cache.get("c", "basic") is None  # 且 c 已入缓存
+
+def test_cache_max_entries_env(monkeypatch):
+    monkeypatch.setenv("SCRAPLING_CACHE_MAX_ENTRIES", "16")
+    cfg = _fresh_config()                    # 沿用该文件现有的单例重置手法
+    init_config_from_env()
+    assert cfg.cache_max_entries == 16

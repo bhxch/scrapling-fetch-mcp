@@ -27,9 +27,10 @@ class PageCache:
     methods from multiple OS threads.
     """
 
-    def __init__(self, ttl_seconds: int = 300):
+    def __init__(self, ttl_seconds: int = 300, max_entries: int = 256):
         self._cache: dict[str, tuple[str, float, Any]] = {}  # key -> (mode, timestamp, content)
         self._ttl = ttl_seconds
+        self._max_entries = max_entries
 
     def _make_key(self, url: str, mode: str) -> str:
         """Create cache key from URL and mode"""
@@ -50,6 +51,10 @@ class PageCache:
     def set(self, url: str, mode: str, content: Any) -> None:
         """Cache page content with current timestamp"""
         key = self._make_key(url, mode)
+        # 条目上限：先清过期，再按插入序（dict 保序）逐出最旧，直至容纳新条目
+        self.clear_expired()
+        while self._cache and len(self._cache) >= self._max_entries:
+            del self._cache[next(iter(self._cache))]
         self._cache[key] = (mode, time(), content)
 
     def clear_expired(self) -> int:
@@ -74,6 +79,7 @@ class Config:
     _instance = None
     _min_mode: str = "stealth"
     _cache_ttl: int = 300  # Default 5 minutes
+    _cache_max_entries: int = 256  # 缓存条目上限
     _cache: Optional[PageCache] = None
     _scraping_dir: Path = Path(".temp/scrapling/")
     _markdown_converter: str = "markitdown"  # Default converter
@@ -115,10 +121,15 @@ class Config:
         return self._cache_ttl
 
     @property
+    def cache_max_entries(self) -> int:
+        """Get the maximum number of entries the page cache may hold"""
+        return self._cache_max_entries
+
+    @property
     def cache(self) -> PageCache:
         """Get or create the page cache"""
         if self._cache is None:
-            self._cache = PageCache(self._cache_ttl)
+            self._cache = PageCache(self._cache_ttl, max_entries=self._cache_max_entries)
         return self._cache
 
     @property
@@ -139,8 +150,14 @@ class Config:
         if ttl_seconds < 0:
             raise ValueError("Cache TTL must be non-negative")
         self._cache_ttl = ttl_seconds
-        # Recreate cache with new TTL
-        self._cache = PageCache(self._cache_ttl)
+        # Recreate cache with new TTL (carrying the entry cap through)
+        self._cache = PageCache(self._cache_ttl, max_entries=self._cache_max_entries)
+
+    def set_cache_max_entries(self, value: int) -> None:
+        """Set the maximum number of entries the page cache may hold"""
+        if value < 0:
+            raise ValueError("cache_max_entries must be non-negative")
+        self._cache_max_entries = value
 
     def set_scraping_dir(self, path: Path | str) -> None:
         """Set the scraping directory"""
@@ -380,6 +397,13 @@ def init_config_from_env() -> None:
         try:
             ttl = int(env_cache_ttl)
             config.set_cache_ttl(ttl)
+        except ValueError:
+            pass  # Invalid value, use default
+
+    env_cache_max_entries = getenv("SCRAPLING_CACHE_MAX_ENTRIES", "")
+    if env_cache_max_entries:
+        try:
+            config.set_cache_max_entries(int(env_cache_max_entries))
         except ValueError:
             pass  # Invalid value, use default
 
