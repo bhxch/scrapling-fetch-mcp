@@ -230,6 +230,13 @@ def test_page_cache_max_entries_fifo_eviction():
     assert cache.get("u0", "basic") is None
     assert cache.get("u3", "basic") == "c3"
 
+def test_page_cache_max_entries_zero_disables_cache():
+    """max_entries<=0 语义为禁用缓存:set 短路,get 恒 miss,_cache 保持空"""
+    cache = PageCache(ttl_seconds=300, max_entries=0)
+    cache.set("u", "basic", "c")
+    assert cache.get("u", "basic") is None
+    assert cache._cache == {}
+
 def test_page_cache_evicts_expired_before_fifo():
     cache = PageCache(ttl_seconds=0, max_entries=2)   # ttl=0 → 立即过期
     cache.set("a", "basic", "1"); cache.set("b", "basic", "2")

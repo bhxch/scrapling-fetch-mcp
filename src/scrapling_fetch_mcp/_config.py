@@ -50,6 +50,8 @@ class PageCache:
 
     def set(self, url: str, mode: str, content: Any) -> None:
         """Cache page content with current timestamp"""
+        if self._max_entries <= 0:
+            return  # 0 = 禁用缓存，而非"保留 1 条"
         key = self._make_key(url, mode)
         # 条目上限：先清过期，再按插入序（dict 保序）逐出最旧，直至容纳新条目
         self.clear_expired()
