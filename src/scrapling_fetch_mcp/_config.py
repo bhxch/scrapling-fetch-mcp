@@ -355,7 +355,7 @@ class Config:
 
     def set_browser_pool(self, value: bool) -> None:
         """Set whether to enable the browser session pool"""
-        self._browser_pool = bool(value)
+        self._browser_pool = value  # 与 set_disable_url_rewrite 一致:直接赋值不隐藏类型
 
     @property
     def pool_idle_ttl(self) -> float:
