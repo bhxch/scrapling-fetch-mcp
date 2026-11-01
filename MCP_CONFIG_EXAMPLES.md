@@ -455,8 +455,8 @@ mcp.example.com {
 | 池最长寿命(秒) | `SCRAPLING_POOL_MAX_AGE` | `--pool-max-age` | `1800` |
 | 池容量上限 | `SCRAPLING_POOL_MAX_SESSIONS` | `--pool-max-sessions` | `4` |
 | 池单会话请求预算 | `SCRAPLING_POOL_MAX_REQUESTS` | `--pool-max-requests` | `50` |
-| daemon 目录 | `SCRAPLING_DAEMON_DIR` | — | platformdirs 用户数据目录 |
-| daemon 空闲退出(秒) | `SCRAPLING_DAEMON_IDLE_TIMEOUT` | — | `600` |
+| daemon 目录 | `SCRAPLING_DAEMON_DIR` | `--daemon-dir` | platformdirs 用户数据目录 |
+| daemon 空闲退出(秒) | `SCRAPLING_DAEMON_IDLE_TIMEOUT` | `--daemon-idle-timeout` | `600` |
 
 > **配置与 daemon 的关系**：抓取行为相关的配置（除传输/鉴权/features 与 daemon 生命周期两项外）归 daemon 所有，其归一化值的摘要参与 socket 命名（`daemon-<包版本>-<摘要8hex>`）——改配置即换名，各自拉起独立 daemon，互不干扰，不存在配置静默不一致。`SCRAPLING_DAEMON_DIR` / `SCRAPLING_DAEMON_IDLE_TIMEOUT` 仅影响生命周期，不入摘要。
 
