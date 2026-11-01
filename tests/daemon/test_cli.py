@@ -185,3 +185,27 @@ def test_run_server_dispatches_daemon_argv(daemon_env, monkeypatch, capsys):
         mcp_mod.run_server()
     assert ei.value.code == 0
     assert "无存活 daemon" in capsys.readouterr().out
+
+
+def test_run_server_daemon_dispatch_honors_daemon_dir_env(monkeypatch, tmp_path, capsys):
+    """I1 回归：argv 分流早于主路径初始化，分支内必须先 init_config_from_env。
+
+    不补这一行则 daemon_dir() 读未初始化单例（_daemon_dir=None）→ platformdirs
+    默认目录，SCRAPLING_DAEMON_DIR 被无视，status/shutdown 看错目录。
+    """
+    from scrapling_fetch_mcp._config import Config
+
+    Config()._daemon_dir = None  # 模拟未初始化单例,后续全靠分流内的 init 生效
+    sock = tmp_path / "daemon-9.9.9-deadbeef.sock"
+    sock.write_text("not a socket")  # 假 sock → status 表内 DEAD 行仍可见
+    monkeypatch.setenv("SCRAPLING_DAEMON_DIR", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["scrapling-fetch-mcp", "daemon", "status"])
+    try:
+        with pytest.raises(SystemExit) as ei:
+            mcp_mod.run_server()
+        out = capsys.readouterr().out
+    finally:
+        monkeypatch.delenv("SCRAPLING_DAEMON_DIR", raising=False)
+        _reset_daemon_config()  # 清掉分流内 init 写进单例的 tmp 路径,防泄漏
+    assert ei.value.code == 0
+    assert "daemon-9.9.9-deadbeef.sock" in out  # 看到的是 env 指定目录, 非 platformdirs 默认

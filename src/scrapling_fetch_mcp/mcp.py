@@ -237,6 +237,9 @@ def run_server():
     # `daemon` 管理子命令分流：在 MCP 参数解析前拦截，处理完即退出，MCP 路径零改动
     if sys.argv[1:2] == ["daemon"]:
         sys.argv.pop(1)
+        # 分流早于主路径的 init_config_from_env：不补则 daemon_dir() 读到
+        # 未初始化单例，SCRAPLING_DAEMON_DIR 被无视、status/shutdown 看错目录
+        init_config_from_env()
         sys.exit(_daemon_main(sys.argv[1:]))
     global mcp
     parser = ArgumentParser(
