@@ -87,6 +87,11 @@ def _fmt(value: object) -> str:
     return "-" if value is None else str(value)
 
 
+def _fmt_uptime(value: object) -> str:
+    """表格单元格：uptime 显示为整秒（uptime_s 为带小数的单调时钟差）；None → "-"。"""
+    return "-" if value is None else str(int(value))
+
+
 def _daemon_status() -> int:
     """清点 daemon 目录下全部 socket，表格输出；恒返回 0。
 
@@ -98,8 +103,9 @@ def _daemon_status() -> int:
     if not socks:
         print("无存活 daemon")
         return 0
+    name_w = max(len(s.name) for s in socks) + 2  # 列宽随最长 sock 名自适应
     print(
-        f"{'SOCKET':<44} {'PKG':<8} {'HASH':<8} {'PID':>7} "
+        f"{'SOCKET':<{name_w}} {'PKG':<8} {'HASH':<8} {'PID':>7} "
         f"{'UPTIME':>9} {'CLIENTS':>7} {'CACHE':>6}  STATUS"
     )
     any_dead = False
@@ -109,14 +115,14 @@ def _daemon_status() -> int:
         if resp is None:
             any_dead = True
             print(
-                f"{sock.name:<44} {_fmt(lock.get('pkg')):<8} {_fmt(lock.get('config_hash')):<8} "
+                f"{sock.name:<{name_w}} {_fmt(lock.get('pkg')):<8} {_fmt(lock.get('config_hash')):<8} "
                 f"{_fmt(lock.get('pid')):>7} {'-':>9} {'-':>7} {'-':>6}  DEAD"
             )
             continue
         r = resp.get("result") or {}
         print(
-            f"{sock.name:<44} {_fmt(r.get('pkg')):<8} {_fmt(r.get('config_hash')):<8} "
-            f"{_fmt(r.get('pid')):>7} {_fmt(r.get('uptime_s')):>9} "
+            f"{sock.name:<{name_w}} {_fmt(r.get('pkg')):<8} {_fmt(r.get('config_hash')):<8} "
+            f"{_fmt(r.get('pid')):>7} {_fmt_uptime(r.get('uptime_s')):>9} "
             f"{_fmt(r.get('clients')):>7} {_fmt(r.get('cache_entries')):>6}  ready"
         )
     if any_dead:

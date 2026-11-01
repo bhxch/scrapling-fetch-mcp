@@ -199,6 +199,20 @@ def test_status_empty_dir_says_none(daemon_env, capsys):
     assert "无存活 daemon" in capsys.readouterr().out
 
 
+def test_status_uptime_integer_and_dynamic_socket_width(daemon_env, capsys):
+    """uptime 显示整秒；SOCKET 列宽随最长 sock 名自适应（不钉死列宽）。"""
+    long_name = "daemon-9.9.9-" + "e" * 40  # 53 字符,远超原固定列宽 44
+    sock = daemon_env / f"{long_name}.sock"
+    sock.write_text("not a socket")
+    assert mcp_mod._daemon_main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert f"{'SOCKET':<{len(long_name) + 2}}" in out  # 列宽 = max(列值)+2
+    assert long_name in out
+    assert mcp_mod._fmt_uptime(30.7) == "30"  # uptime 整秒
+    assert mcp_mod._fmt_uptime(0.0) == "0"
+    assert mcp_mod._fmt_uptime(None) == "-"
+
+
 def test_status_marks_dead_socket_and_hints_all(daemon_env, capsys):
     """连接失败（假 sock 文件）→ DEAD 标记 + `shutdown --all` 清理提示。"""
     sock = daemon_env / "daemon-0.2.0-deadbeef.sock"
