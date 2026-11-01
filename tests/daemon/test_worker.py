@@ -321,6 +321,43 @@ async def test_cancel_unknown_id_reports_false(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cancel_grace_does_not_block_read_loop(tmp_path, monkeypatch):
+    """cancel 的宽限等待移出读循环：宽限期间同连接 ping 即时应答。
+
+    目标吞取消且挂死 → 宽限必然耗尽（killpg 兜底，测试内 monkeypatch 掉）。
+    旧内联实现会阻塞读循环整段宽限，ping 迟到 5s 量级。
+    """
+    monkeypatch.setattr(worker_mod.os, "killpg", lambda pgid, sig: None)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def zombie_wrapper(**kw):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await release.wait()  # 模拟浏览器清理挂死:吞取消且长期不让出
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", zombie_wrapper)
+    async with serve_worker(tmp_path, cancel_grace=5.0) as h:
+        async with Client(h.sock) as c:
+            await c.send(make_request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2, "0.3.0"))
+            await asyncio.wait_for(started.wait(), 5)
+            await c.send(make_request(OP_CANCEL, {"cancel_id": 2}, h.worker.token, 3, "0.3.0"))
+            # 宽限进行中:同连接 ping 必须 <1s 应答(旧内联实现会阻塞 5s+)
+            loop = asyncio.get_running_loop()
+            t0 = loop.time()
+            ping = await asyncio.wait_for(c.request(OP_PING, {}, h.worker.token, 4), 1.0)
+            assert loop.time() - t0 < 1.0
+            assert ping["ok"] is True and ping["id"] == 4
+            # 宽限耗尽后 cancel 响应照常到达,再放行僵尸任务让 serve 收尾
+            cancel_resp = await asyncio.wait_for(c.recv(), 8)
+            assert cancel_resp["id"] == 3
+            assert cancel_resp["result"] == {"cancelled": True}
+            release.set()
+
+
+@pytest.mark.asyncio
 async def test_cancel_grace_exhausted_triggers_killpg(tmp_path, monkeypatch):
     """宽限期耗尽 → 核弹兜底：os.killpg(os.getpgid(0), SIGKILL) 被调用。
 

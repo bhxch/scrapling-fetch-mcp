@@ -4,8 +4,10 @@
 
 - **ping 延迟是承重约束**：lifecycle 的 is_alive 用 2s connect / 5s 响应判活，
   忙碌的 worker 若拖延 ping 会被误判陈旧而遭重拉。因此每个 fetch 请求都
-  作为独立 asyncio 任务分派（多路复用），ping/status/cancel/shutdown 一律
-  由读循环内联即时应答——fetch 逻辑绝不内联进读循环。
+  作为独立 asyncio 任务分派（多路复用），cancel 亦以任务分发（其 5s 宽限
+  等待绝不阻塞读循环）；ping/status/shutdown 由读循环内联即时应答——
+  fetch 逻辑绝不内联进读循环。响应一律按请求 id 关联，到达顺序对前端无
+  影响（按 id 定界）。
 - **坏帧韧性**：读循环对单帧的解析与分派整体兜底 ``Exception``（深嵌套
   JSON 可令 ``json.loads`` 抛 ``RecursionError`` 穿透 ``ProtocolError``），
   坏帧以错误帧应答，绝不击穿连接或 worker。
@@ -14,6 +16,8 @@
   死）则 ``os.killpg`` 强杀整个进程组（daemon 经 ``start_new_session`` 是
   自身进程组长，scrapling 拉起的浏览器同组——daemon 与残留浏览器同归于尽，
   前端检测死亡后自动重拉）。此为最后手段，任何软性收尾都无法保证时才走。
+  cancel op 自身的取消语义：仅当 cancel 任务自己被取消（读循环终止/收尾）
+  时向外传播；目标任务以 cancelled 收场则补发 E_CANCELLED 后照常收尾。
 
 Import 边界约束：本模块仅 daemon 侧使用，允许模块级引入重依赖
 （``_fetcher``/``_scrapling`` 等）；前端白名单模块
@@ -163,6 +167,8 @@ class DaemonWorker:
         self._lock_path = self._sock.with_suffix(".lock")
         self._started = time.monotonic()
         self._tasks: dict[int, asyncio.Task] = {}
+        # 在飞的 cancel op 任务（连接级任务集另持有引用；cleanup 时统一收口）
+        self._cancel_tasks: set[asyncio.Task] = set()
         self._clients = 0
         self._stopping = False
         self._server: asyncio.AbstractServer | None = None
@@ -244,6 +250,10 @@ class DaemonWorker:
                 task.cancel()
             # 限时收尾：正常取消毫秒级返回；杀不死的应用层僵尸由进程退出兜底
             await asyncio.wait(list(self._tasks.values()), timeout=_EXIT_TASK_GRACE)
+        if self._cancel_tasks:
+            for task in list(self._cancel_tasks):
+                task.cancel()  # 未决 cancel op 的宽限等待一并打断
+            await asyncio.wait(list(self._cancel_tasks), timeout=_EXIT_TASK_GRACE)
         # 浏览器池收口（spec §6.2：daemon 退出不留池化浏览器）。放在任务
         # 收尾之后——无在飞 fetch 时 close_all 才安全。仅当池已惰性构造过
         # 才关（默认关时 _pool 为 None，零开销）。限时宽限：Firefox close
@@ -276,6 +286,7 @@ class DaemonWorker:
         """单连接读循环：NDJSON 逐帧处理；引用计数支撑空闲退出。"""
         self._clients += 1
         self._idle_event.set()  # 与 clear-before-wait 配套：打断进行中的空闲等待
+        ops: set[asyncio.Task] = set()  # 本连接分发出的 cancel op 任务
 
         async def send(frame: bytes) -> None:
             writer.write(frame)
@@ -292,12 +303,16 @@ class DaemonWorker:
                     # （上限内的坏帧走 _process_line 的错误应答，连接存活）
                     logger.warning("单帧超过 %d 字节上限, 断开连接", STREAM_LIMIT)
                     break
-                response = await self._process_line(line, send)
+                response = await self._process_line(line, send, ops)
                 if response is not None:
                     await send(response)
         except (ConnectionError, OSError):
             pass  # 对端断开属连接生命周期的正常终点
         finally:
+            # 读循环终止 → 本连接未决的 cancel op 一并取消（外层取消传播到
+            # 任务；其 E_CANCELLED/cancel 响应再无通道，_safe_send 兜底吞掉）
+            for task in ops:
+                task.cancel()
             self._clients -= 1
             writer.close()
             try:
@@ -305,23 +320,24 @@ class DaemonWorker:
             except (ConnectionError, OSError):
                 pass
 
-    async def _process_line(self, line: bytes, send) -> bytes | None:
+    async def _process_line(self, line: bytes, send, ops: set) -> bytes | None:
         """解析并分派一帧；任何异常都折成错误帧，绝不让坏帧击穿读循环。
 
         宽兜底 ``Exception`` 是承重的：深嵌套 JSON 可令 ``json.loads`` 抛
         ``RecursionError``（不是 ``ProtocolError`` 子类），不接住会杀死连接。
+        ``ops`` 收集分发出的 cancel op 任务（读循环取消时反向取消它们）。
         """
         try:
             frame = parse_frame(line)
-            return await self._dispatch(frame, send)
+            return await self._dispatch(frame, send, ops)
         except ProtocolError as exc:
             return make_error(0, E_BAD_FRAME, str(exc))
         except Exception as exc:  # noqa: BLE001  见 docstring：兜底即本函数的存在理由
             logger.warning("帧处理异常, 按 internal 错误应答: %r", exc)
             return make_error(0, E_INTERNAL, f"帧处理失败: {exc}")
 
-    async def _dispatch(self, frame: dict, send) -> bytes | None:
-        """op 路由。fetch 返回 None（响应由独立任务按 id 多路复用发出）。"""
+    async def _dispatch(self, frame: dict, send, ops: set) -> bytes | None:
+        """op 路由。fetch/cancel 返回 None（响应由独立任务按 id 多路复用发出）。"""
         req_id = frame.get("id", 0)
         token = frame.get("token")
         if not isinstance(token, str) or token != self._token:
@@ -333,7 +349,13 @@ class DaemonWorker:
         if op == OP_STATUS:
             return make_response(req_id, self._status_result())
         if op == OP_CANCEL:
-            return await self._handle_cancel(req_id, payload, send)
+            # 独立任务分发：5s 宽限等待绝不阻塞读循环（同连接的 ping/status
+            # 必须即时应答）。响应由任务完成后经 _safe_send 发出。
+            task = asyncio.create_task(self._run_cancel(req_id, payload, send))
+            ops.add(task)
+            self._cancel_tasks.add(task)
+            task.add_done_callback(self._cancel_tasks.discard)
+            return None
         if op == OP_SHUTDOWN:
             self.request_shutdown()
             return make_response(req_id, {"status": "stopping"})
@@ -371,6 +393,18 @@ class DaemonWorker:
             "degradation": degradation,
             "pool": pool_stats,
         }
+
+    async def _run_cancel(self, req_id: int, payload: object, send) -> None:
+        """cancel op 任务体：响应由本任务经 _safe_send 发出（读循环不等待）。
+
+        取消语义（承接原内联实现）：仅当 cancel 任务自身被取消（读循环终止、
+        worker 收尾）才向外传播——此时响应通道已关闭，不再伪造应答。
+        """
+        try:
+            response = await self._handle_cancel(req_id, payload, send)
+        except asyncio.CancelledError:
+            raise
+        await _safe_send(send, response)
 
     async def _handle_cancel(self, req_id: int, payload: object, send) -> bytes:
         cancel_id = payload.get("cancel_id") if isinstance(payload, dict) else None
