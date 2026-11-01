@@ -563,3 +563,68 @@ def test_main_rejects_windows(monkeypatch):
     monkeypatch.setattr(daemon_main.sys, "platform", "win32")
     with pytest.raises(RuntimeError):
         daemon_main.main()
+
+
+def test_main_binds_self_computed_hash_ignoring_env_key(monkeypatch, tmp_path):
+    """M3 回归：真 worker 不读 SCRAPLING_DAEMON_CONFIG_HASH（fake_worker 专用键）。
+
+    daemon/__main__ 曾读该键做绑定 hash：用户 env 残留时按残留值绑定 socket，
+    与前端自算 hash 永久不符 → is_alive 身份不符 → 清理重拉无休止循环。
+    身份唯一来源必须是本进程 env 自算（config_env.normalize_daemon_values）。
+    """
+    from scrapling_fetch_mcp._config import Config
+    from scrapling_fetch_mcp.daemon import __main__ as daemon_main
+    from scrapling_fetch_mcp.daemon.config_env import (
+        DAEMON_OWNED_ENV_KEYS,
+        resolve_daemon_env,
+    )
+    from scrapling_fetch_mcp.daemon.lifecycle import socket_name
+
+    # env 整备：daemon-owned 键清零（hash 确定）+ 注入残留专用键 + 目录钉 tmp
+    saved_env = {k: os.environ.get(k) for k in DAEMON_OWNED_ENV_KEYS}
+    for k in DAEMON_OWNED_ENV_KEYS:
+        os.environ.pop(k, None)
+    monkeypatch.setenv("SCRAPLING_DAEMON_CONFIG_HASH", "deadbeef")
+    monkeypatch.setenv("SCRAPLING_DAEMON_DIR", str(tmp_path))
+    Config()._daemon_dir = None  # 未初始化态：身份全靠 main 内的 init+自算
+
+    captured: dict = {}
+
+    class FakeDaemon:
+        def __init__(self, sock, idle_timeout, *, config_hash=None,
+                     cancel_grace=worker_mod.CANCEL_GRACE):
+            captured["sock"] = Path(sock)
+            captured["config_hash"] = config_hash
+
+        async def serve(self):
+            return None
+
+    async def fake_serve(daemon):
+        await daemon.serve()
+
+    monkeypatch.setattr(worker_mod, "DaemonWorker", FakeDaemon)
+    monkeypatch.setattr(daemon_main, "_serve", fake_serve)  # 避开信号处理器注册
+    monkeypatch.setattr(daemon_main.logging, "basicConfig", lambda **kw: None)
+    monkeypatch.setattr(
+        "scrapling_fetch_mcp._browser_check.ensure_browserforge_data", lambda: None
+    )
+    monkeypatch.setattr("scrapling_fetch_mcp._browser_check.ensure_camoufox", lambda: None)
+    monkeypatch.setattr(
+        "scrapling_fetch_mcp._scrapling.init_guard", lambda *a, **kw: None
+    )
+    try:
+        assert daemon_main.main() == 0
+    finally:
+        for k, v in saved_env.items():  # monkeypatch 管不到上面的直接 pop
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        cfg = Config()
+        cfg._daemon_dir = None  # 清掉 main 内 init 写进单例的 tmp 路径
+        cfg._daemon_idle_timeout = 600.0
+
+    _spawn_env, self_hash = resolve_daemon_env()
+    assert captured["config_hash"] == self_hash
+    assert self_hash != "deadbeef"  # 残留专用键未被消费
+    assert captured["sock"].name == f"{socket_name(self_hash)}.sock"

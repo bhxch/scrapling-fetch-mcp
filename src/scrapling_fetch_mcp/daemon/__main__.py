@@ -1,9 +1,10 @@
 """``python -m scrapling_fetch_mcp.daemon`` 入口：daemon worker 启动序列。
 
 序列（spec 定序）：win32 拒绝 → ``init_config_from_env()``（daemon-owned env
-已由 spawn 注入）→ ``normalize_daemon_values()`` 自算 config_hash 并与
-spawn 侧注入的期望 hash（``SCRAPLING_DAEMON_CONFIG_HASH``）防御比对（不一致
-仅日志告警不退出——按期望 hash 绑定 socket 保证前端找得到）→
+已由 spawn 注入）→ ``resolve_daemon_env()`` 自算 config_hash（唯一身份来
+源，绝不读 spawn/用户环境里的 ``SCRAPLING_DAEMON_CONFIG_HASH``——那是
+lifecycle 测试喂给 fake_worker 的专用键，残留会让 socket 身份与前端自算
+永久不符、陷入无休止重拉）→
 ``ensure_browserforge_data()``（阻塞，秒级）→ ``ensure_camoufox()``（内部
 后台线程，不阻塞）→ ``init_guard`` → 经 :class:`~scrapling_fetch_mcp.daemon.
 worker.DaemonWorker` 写 lock（``secrets.token_hex(16)``）→
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
 
@@ -47,16 +47,12 @@ def main() -> int:
     )
 
     init_config_from_env()
+    # config_hash 唯一来源：本进程 env 自算。SCRAPLING_DAEMON_CONFIG_HASH 是
+    # lifecycle 测试喂给 fake_worker 的专用键（fake worker 无法自算），真
+    # worker 绝不消费——用户 env 残留该键时按它绑定 socket 会与前端自算
+    # hash 永久不符，身份不符→误判陈旧→无休止重拉循环。
     _spawn_env, self_hash = resolve_daemon_env()
-    expected_hash = os.environ.get("SCRAPLING_DAEMON_CONFIG_HASH", "") or self_hash
-    if expected_hash != self_hash:
-        # 防御比对：spawn 侧与 daemon 侧对同 env 的解析分叉（理论上不应发生）。
-        # 仅告警不退出——按期望 hash 绑定 socket，前端才能连上并继续工作。
-        logger.warning(
-            "config_hash 防御比对不一致: 期望 %s, 自算 %s (按期望值继续)",
-            expected_hash, self_hash,
-        )
-    sock = daemon_dir() / f"{socket_name(expected_hash)}.sock"
+    sock = daemon_dir() / f"{socket_name(self_hash)}.sock"
 
     logger.info("daemon 启动: sock=%s", sock)
     ensure_browserforge_data()
@@ -66,7 +62,7 @@ def main() -> int:
     daemon = worker_mod.DaemonWorker(
         sock,
         idle_timeout=config.daemon_idle_timeout,
-        config_hash=expected_hash,
+        config_hash=self_hash,
     )
     asyncio.run(_serve(daemon))
     return 0
