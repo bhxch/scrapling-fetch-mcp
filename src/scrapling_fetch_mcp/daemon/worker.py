@@ -360,6 +360,11 @@ class DaemonWorker:
             self.request_shutdown()
             return make_response(req_id, {"status": "stopping"})
         if op in (OP_FETCH_PAGE, OP_FETCH_PATTERN):
+            if req_id in self._tasks:
+                # 重复 id 会覆盖 _tasks 里的旧任务引用：旧请求从此不可 cancel、
+                # 完成后 finally 会误删新注册——前端按 id 定界，重复 id 属协议
+                # 违约，直接拒绝且保留旧注册
+                return make_error(req_id, E_INTERNAL, "duplicate request id")
             # 独立任务分派：fetch 再慢也不阻塞读循环（ping 延迟承重，见模块 docstring）
             task = asyncio.create_task(self._run_fetch(req_id, op, payload, send))
             self._tasks[req_id] = task

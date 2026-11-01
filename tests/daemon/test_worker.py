@@ -258,6 +258,36 @@ async def test_multiplex_two_requests_one_connection(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_req_id_rejected_and_first_survives(tmp_path, monkeypatch):
+    """同 id 两个 fetch：后者收 duplicate 错误，前者注册不被覆盖、照常完成。"""
+    release = asyncio.Event()
+
+    async def gated_wrapper(**kw):
+        await release.wait()
+        return "first-done"
+
+    monkeypatch.setattr(worker_mod, "fetch_page_wrapper", gated_wrapper)
+    async with serve_worker(tmp_path) as h:
+        async with Client(h.sock) as c:
+            await c.send(make_request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2, "0.3.0"))
+            # 确定性地等第一个 fetch 任务注册进 _tasks
+            deadline = asyncio.get_running_loop().time() + 5
+            while 2 not in h.worker._tasks:
+                if asyncio.get_running_loop().time() > deadline:
+                    pytest.fail("fetch 任务未注册")
+                await asyncio.sleep(0.01)
+            dup = await asyncio.wait_for(
+                c.request(OP_FETCH_PAGE, dict(PAGE_PAYLOAD), h.worker.token, 2), 5)
+            release.set()
+            first = await asyncio.wait_for(c.recv(), 5)
+    assert dup["ok"] is False
+    assert dup["error"]["code"] == E_INTERNAL
+    assert "duplicate" in dup["error"]["message"]
+    assert first["id"] == 2 and first["ok"] is True
+    assert first["result"]["result"] == "first-done"
+
+
+@pytest.mark.asyncio
 async def test_fetch_impl_error_maps_to_internal(tmp_path, monkeypatch):
     async def boom(**kw):
         raise RuntimeError("boom")
