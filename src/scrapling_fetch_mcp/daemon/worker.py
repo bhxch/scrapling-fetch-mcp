@@ -215,6 +215,11 @@ class DaemonWorker:
                         # 竞态收口：连接的 set 落在 clients 检查之后、clear 之前
                         # （事件被误清）时，超时醒来发现其实有活连接——重新计时
                         continue
+                    # TOCTOU 收窄：让出一步事件循环，使恰在此刻到达的连接回调
+                    # （_clients += 1）先于退出判定执行，仍为 0 才退出
+                    await asyncio.sleep(0)
+                    if self._clients > 0:
+                        continue
                     logger.info("空闲 %ss 无连接, daemon 退出", self._idle_timeout)
                     break
         finally:
