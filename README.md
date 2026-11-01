@@ -76,6 +76,39 @@ The AI decides which tool to use based on your request. You just ask naturally:
 "Get me the installation instructions from their homepage"
 ```
 
+## 架构：后台 daemon 与浏览器池
+
+自 0.3.0 起，MCP 前端是薄壳：工具调用经 unix socket（NDJSON + token 鉴权，按请求 id 多路复用）转发给按需自动拉起的后台 daemon 进程——抓取逻辑、页面缓存、并发闸门与可选浏览器池全部在 daemon 内执行，多个客户端会话共享同一份内存与缓存，前端进程保持轻量、随客户端即起即灭。
+
+### 生命周期（全自动，无需 systemd / socket activation）
+
+| 阶段 | 行为 |
+|------|------|
+| 自动拉起 | 首个工具请求触发：前端确保同 (包版本，配置摘要) 的 daemon 恰好一个并等待就绪（并发拉起经 spawn.lock 仲裁，不会重复起进程） |
+| 空闲自退 | 全部客户端断开后空闲 600s（`SCRAPLING_DAEMON_IDLE_TIMEOUT` 可调）自动退出；退出前销毁池化浏览器、清理 socket/lock |
+| 死亡重生 | daemon 意外死亡时前端检测到断连，自动重拉后重试请求 |
+| 版本/配置隔离 | socket 名为 `daemon-<包版本>-<配置摘要8hex>`：升级或改抓取配置即换名，各自拉起、互不干扰 |
+| 过渡期共存 | 版本滚动（如 uvx 自动更新）期间新旧 daemon 短暂共存 2 个（约 +155 MB），旧 daemon 在一个空闲超时周期内自退消亡 |
+
+### 管理 CLI
+
+```bash
+scrapling-fetch-mcp daemon status              # 表格列出全部 daemon（版本/配置/pid/uptime/客户端数/缓存）
+scrapling-fetch-mcp daemon shutdown            # 优雅停止当前版本+配置的 daemon
+scrapling-fetch-mcp daemon shutdown --all      # 停止全部 daemon 并清理残留（含其他版本/配置）
+scrapling-fetch-mcp daemon shutdown --socket daemon-0.3.0-abcd1234   # 定点停止指定 socket
+```
+
+> **Windows 暂不支持**：daemon 依赖 unix socket，仅限 Linux/macOS；Windows 上会直接报错。
+
+### 并发语义变化
+
+`--max-concurrent`（默认 5）自 0.3.0 起为 **daemon 内全局并发**：所有客户端会话共享同一个信号量（此前是每个客户端会话各自 5）。超限请求排队等待 `--acquire-timeout` 秒后返回 `CONCURRENCY_LIMIT` 类错误，前端提示稍后重试。
+
+### 浏览器池（可选，默认关闭）
+
+`--browser-pool`（env `SCRAPLING_BROWSER_POOL`）开启后，stealth/max-stealth 请求按 **(eTLD+1 注册域名, mode)** 分桶复用 Firefox 会话，省去每次冷启动（数秒 + 数百 MB 峰值）。跨域名不共享身份；任一重建触发即销毁重建：空闲 >300s、累计年龄 >1800s（指纹新鲜度硬上限）、请求数 >50、抓取异常、疑似挑战页。池上限 4 个活跃会话（`SCRAPLING_POOL_MAX_SESSIONS`，LRU 逐出）。daemon 空闲退出或版本重拉时全部池化会话销毁，不留持久状态。
+
 ## Parameters Reference
 
 ### `s_fetch_page` — Fetch Complete Pages
@@ -122,8 +155,17 @@ These settings are configured when starting the MCP server, either via CLI argum
 | `--port` | `SCRAPLING_PORT` | `int` | `8000` | Bind port for streamable-http |
 | `--mcp-path` | `SCRAPLING_MCP_PATH` | `str` | `"/mcp"` | URL path for streamable-http |
 | `--auth-token` | `SCRAPLING_AUTH_TOKEN` | `str` | `""` | Bearer token for streamable-http auth. Empty = no auth |
-| `--max-concurrent` | `SCRAPLING_MAX_CONCURRENT` | `int` | `5` | Max concurrent fetches (semaphore) |
+| `--max-concurrent` | `SCRAPLING_MAX_CONCURRENT` | `int` | `5` | Max concurrent fetches — **global across all client sessions** (daemon-wide semaphore since 0.3.0) |
 | `--acquire-timeout` | `SCRAPLING_ACQUIRE_TIMEOUT` | `float` | `30` | Seconds to wait for a concurrency slot before failing |
+| `--fetch-timeout` | `SCRAPLING_FETCH_TIMEOUT` | `float` | `60` | Seconds before a single fetch is aborted (includes browser loading) |
+| `--browser-pool` | `SCRAPLING_BROWSER_POOL` | `bool` | `false` | Enable the browser session pool for stealth modes (per-(domain, mode) reuse) |
+| `--pool-idle-ttl` | `SCRAPLING_POOL_IDLE_TTL` | `float` | `300` | Seconds an idle pooled browser session survives before recycle |
+| `--pool-max-age` | `SCRAPLING_POOL_MAX_AGE` | `float` | `1800` | Max lifetime of a pooled session regardless of activity (fingerprint freshness cap) |
+| `--pool-max-sessions` | `SCRAPLING_POOL_MAX_SESSIONS` | `int` | `4` | Max pooled browser sessions (LRU eviction) |
+| `--pool-max-requests` | `SCRAPLING_POOL_MAX_REQUESTS` | `int` | `50` | Requests a pooled session serves before recycle |
+| — | `SCRAPLING_CACHE_MAX_ENTRIES` | `int` | `256` | Page cache max entries (expired-first, then FIFO eviction) |
+| — | `SCRAPLING_DAEMON_DIR` | `str` | platformdirs user data dir | Daemon runtime directory (sockets/locks/logs; env only) |
+| — | `SCRAPLING_DAEMON_IDLE_TIMEOUT` | `float` | `600` | Seconds of no clients before the daemon exits (env only) |
 
 ### Streamable-HTTP (Remote Access)
 
@@ -137,7 +179,7 @@ scrapling-fetch-mcp --transport streamable-http --port 8000
 scrapling-fetch-mcp --transport streamable-http --host 0.0.0.0 --port 8000 --auth-token SECRET
 ```
 
-Clients connect to `http://<host>:<port>/mcp` and must send `Authorization: Bearer SECRET` when an auth token is configured. Concurrency is bounded by `--max-concurrent` (default 5); requests beyond the limit queue for up to `--acquire-timeout` seconds, then return an error instead of crashing. For public HTTPS, terminate TLS at a reverse proxy (Caddy/Nginx). See [`MCP_CONFIG_EXAMPLES.md`](MCP_CONFIG_EXAMPLES.md) for full deployment examples.
+Clients connect to `http://<host>:<port>/mcp` and must send `Authorization: Bearer SECRET` when an auth token is configured. Concurrency is bounded by `--max-concurrent` (default 5) — since 0.3.0 this limit is **global across all connected clients** (enforced inside the daemon); requests beyond the limit queue for up to `--acquire-timeout` seconds, then return an error instead of crashing. For public HTTPS, terminate TLS at a reverse proxy (Caddy/Nginx). See [`MCP_CONFIG_EXAMPLES.md`](MCP_CONFIG_EXAMPLES.md) for full deployment examples.
 
 ## Feature Control
 
