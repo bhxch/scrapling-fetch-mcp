@@ -5,10 +5,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 
 from scrapling_fetch_mcp._auth import StaticTokenVerifier
-from scrapling_fetch_mcp._browser_check import (
-    ensure_browserforge_data,
-    ensure_camoufox,
-)
+from scrapling_fetch_mcp._client import make_adapter
 from scrapling_fetch_mcp._config import config, init_config_from_env
 from scrapling_fetch_mcp._features import (
     FEATURES,
@@ -16,10 +13,9 @@ from scrapling_fetch_mcp._features import (
     S_FETCH_PAGE_DOCSTRING,
     S_FETCH_PATTERN_DOCSTRING,
 )
-from scrapling_fetch_mcp._scrapling import init_guard
 from scrapling_fetch_mcp._skills import SKILL_URI, build_extension
 from scrapling_fetch_mcp._tool_factory import build_tool_function
-from scrapling_fetch_mcp._fetcher import fetch_page_wrapper, fetch_pattern_wrapper
+from scrapling_fetch_mcp.daemon.config_env import resolve_daemon_env
 
 _skill_extension = build_extension()
 
@@ -320,14 +316,10 @@ def run_server():
         logger.info(f"Auth: {'enabled' if config.auth_token else 'disabled'}")
     logger.info(f"Concurrency: max={config.max_concurrent}, timeout={config.acquire_timeout}s")
 
-    # Ensure browserforge model data exists for stealth modes (falls back to
-    # the npm registry when the official GitHub download path is unreachable).
-    ensure_browserforge_data()
-    ensure_camoufox()
-
-    # Initialize concurrency guard (both stdio and http run on one event loop;
-    # MCP clients may issue concurrent tool calls even over stdio).
-    init_guard(config.max_concurrent, config.acquire_timeout)
+    # daemon-owned 配置热身：归一化 + 摘要在启动时先算一遍（无 IO、不拉起
+    # daemon），尽早暴露配置问题。daemon 拉起与浏览器准备全部移入 daemon
+    # 侧 worker（__main__.py），前端不再 import _browser_check。
+    resolve_daemon_env()
 
     # When auth is enabled, (re)build the MCPServer with a token verifier.
     # MUST happen before registering tools so they bind to the authed instance.
@@ -344,18 +336,20 @@ def run_server():
             ),
         )
 
-    # Build and register tools dynamically (registers onto the current global mcp)
+    # Build and register tools dynamically (registers onto the current global mcp).
+    # 抓取改走 daemon：impl 为 BackendClient adapter（进度桥接/取消/错误映射
+    # 均在 make_adapter 内部），前端不再 import _fetcher 重链。
     _register_tool(
         "s_fetch_page",
         TOOL_PARAMS["s_fetch_page"],
         S_FETCH_PAGE_DOCSTRING,
-        fetch_page_wrapper,
+        make_adapter("fetch_page"),
     )
     _register_tool(
         "s_fetch_pattern",
         TOOL_PARAMS["s_fetch_pattern"],
         S_FETCH_PATTERN_DOCSTRING,
-        fetch_pattern_wrapper,
+        make_adapter("fetch_pattern"),
     )
 
     # Start the server with the selected transport

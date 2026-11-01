@@ -182,8 +182,6 @@ class TestRunServerTransport:
         import scrapling_fetch_mcp.mcp as mcp_module
         for k in self._ENV_KEYS:
             monkeypatch.delenv(k, raising=False)
-        monkeypatch.setattr(mcp_module, "ensure_browserforge_data", lambda: None)
-        monkeypatch.setattr(mcp_module, "ensure_camoufox", lambda: None)
         captured = []
         monkeypatch.setattr(
             mcp_module.MCPServer, "run", lambda self, **kw: captured.append(kw)
