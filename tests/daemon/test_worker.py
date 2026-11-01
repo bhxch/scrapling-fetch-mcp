@@ -192,8 +192,11 @@ async def test_fetch_pattern_routes_to_pattern_wrapper(tmp_path, monkeypatch):
 async def test_fetch_payload_validation_errors(tmp_path):
     async with serve_worker(tmp_path) as h:
         async with Client(h.sock) as c:
+            # payload 非 dict 已被 parse_frame 的类型校验在协议层拒绝(bad_frame)
+            resp = await c.request(OP_FETCH_PAGE, "not-a-dict", h.worker.token, 8)
+            assert resp["ok"] is False
+            assert resp["error"]["code"] == "bad_frame"
             bad_cases = [
-                "not-a-dict",  # payload 非 dict
                 {k: v for k, v in PAGE_PAYLOAD.items() if k != "url"},  # 缺必填键
                 {**PAGE_PAYLOAD, "bogus_key": 1},  # 未知键
             ]

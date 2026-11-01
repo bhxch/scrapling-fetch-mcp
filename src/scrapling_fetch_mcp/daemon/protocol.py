@@ -100,10 +100,12 @@ def parse_frame(line: bytes) -> dict:
     """解析并校验一帧（不含尾部 \\n 亦可），返回解码后的 dict。
 
     - 非 JSON 输入 → ``ProtocolError``
-    - ``v`` 必须等于 ``PROTOCOL_VERSION``，否则 ``ProtocolError``
+    - ``v`` 必须是 int 且等于 ``PROTOCOL_VERSION``（bool 是 int 子类，一并
+      拒绝；``2.0`` 这类 float 在 JSON 侧 ``==`` 相等，必须按类型挡掉）
     - 请求帧（含任一请求专属字段 ``op``/``token``/``pkg``/``payload``）
-      必须有 ``id``/``op``/``token``——按字段族识别而非仅看 ``op``，
-      否则缺 ``op`` 的残缺请求会漏检
+      必须有类型正确的 ``id``(int)/``op``(str)/``token``(str)；``payload``
+      存在时必须是 dict——按字段族识别而非仅看 ``op``，否则缺 ``op`` 的
+      残缺请求会漏检
     """
     try:
         frame = json.loads(line)
@@ -111,10 +113,18 @@ def parse_frame(line: bytes) -> dict:
         raise ProtocolError(f"帧不是合法 JSON: {exc}") from exc
     if not isinstance(frame, dict):
         raise ProtocolError(f"帧必须是 JSON object, 得到 {type(frame).__name__}")
-    if frame.get("v") != PROTOCOL_VERSION:
-        raise ProtocolError(f"协议版本不匹配: 期望 v={PROTOCOL_VERSION}, 得到 {frame.get('v')!r}")
+    version = frame.get("v")
+    if isinstance(version, bool) or not isinstance(version, int) or version != PROTOCOL_VERSION:
+        raise ProtocolError(f"协议版本不匹配: 期望 v={PROTOCOL_VERSION}, 得到 {version!r}")
     if {"op", "token", "pkg", "payload"} & frame.keys():
-        missing = [key for key in ("id", "op", "token") if frame.get(key) is None]
-        if missing:
-            raise ProtocolError(f"请求帧缺少必填字段: {', '.join(missing)}")
+        req_id = frame.get("id")
+        if isinstance(req_id, bool) or not isinstance(req_id, int):
+            raise ProtocolError(f"请求帧 id 必须是整数, 得到 {req_id!r}")
+        for key in ("op", "token"):
+            if not isinstance(frame.get(key), str):
+                raise ProtocolError(f"请求帧 {key} 必须是字符串, 得到 {frame.get(key)!r}")
+        if "payload" in frame and not isinstance(frame["payload"], dict):
+            raise ProtocolError(
+                f"payload 必须是 JSON object, 得到 {type(frame['payload']).__name__}"
+            )
     return frame
