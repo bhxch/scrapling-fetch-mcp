@@ -5,9 +5,10 @@
 - **桶键** ``(tldextract.registered_domain or netloc, mode)``。mode 入键是
   因为 stealth/max-stealth 启动参数不同，会话身份不可混用；域名取注册域
   （eTLD+1），同域多子页复用收益最大，跨域不共享身份避免 farm 特征。
-- **重建触发**（任一满足即整桶销毁重建，阈值判定一律严格大于）：
-  空闲 > idle_ttl、累计年龄 > max_age、请求数 > max_requests、fetch 异常
-  （销毁后 re-raise）、疑似挑战页（销毁，响应仍交付给管线仲裁）。
+- **重建触发**（任一满足即整桶销毁重建）：空闲 > idle_ttl、累计年龄 >
+  max_age（二者严格大于，恰在阈值上不重建）、请求数 ≥ max_requests
+  （每会话恰服务 max_requests 次）、fetch 异常/取消（销毁后 re-raise）、
+  疑似挑战页（销毁，响应仍交付给管线仲裁）。
 - **并发**：同桶 ``asyncio.Lock`` 串行（一个 Firefox context 上的多 tab
   并发会放大资源与关联风险，不做）；不同桶并行，进程级并发仍由
   ``browse_url`` 外层的全局 ``ConcurrencyGuard`` 约束。
@@ -173,24 +174,29 @@ class BrowserPool:
             if bucket is not None and self._needs_rebuild(bucket):
                 await self._drop(key, bucket)
                 bucket = None
+            hit = bucket is not None  # 复用现有桶=命中候选；交付成功才计入 hits
             if bucket is None:
                 self._misses += 1
                 bucket = await self._build(key, mode)
-            else:
-                self._hits += 1
             try:
                 response = await bucket.session.fetch(
                     url, timeout=timeout_ms, page_action=page_action
                 )
             except asyncio.CancelledError:
+                # 取消与异常同路径：被取消的会话可能停在半途状态，身份不可复用
+                await self._drop(key, bucket)
                 raise
             except Exception:
                 # 出过错的会话身份不可复用：销毁后原样 re-raise
                 await self._drop(key, bucket)
                 raise
+            # hits/请求数在 fetch 成功后才计数：失败/取消的会话已销毁，命中
+            # 统计与"每会话恰服务 max_requests 次"的配额都只对成功交付有效
             bucket.requests += 1
             bucket.last_used = _clock()
             self._buckets.move_to_end(key)  # LRU touch
+            if hit:
+                self._hits += 1
             if _looks_suspicious(response):
                 # 疑似挑战页：响应照常交付（管线可走仲裁），身份立即销毁
                 logger.info("响应疑似挑战页, 销毁池化会话 (%s)", key[0])
@@ -216,12 +222,17 @@ class BrowserPool:
     # ---------- 内部机制 ----------
 
     def _needs_rebuild(self, bucket: _Bucket) -> bool:
-        """命中判定：桶存在且未触发任一重建条件才复用（阈值严格大于）。"""
+        """命中判定：桶存在且未触发任一重建条件才复用。
+
+        空闲/年龄严格大于（恰在阈值上不重建）；请求数用 ``>=``——预检发生在
+        本次 fetch 之前，``requests == max_requests`` 表示配额已被上一请求
+        用满，本会话恰服务 ``max_requests`` 次后整桶销毁重建。
+        """
         now = _clock()
         return (
             now - bucket.last_used > self._idle_ttl
             or now - bucket.created_at > self._max_age
-            or bucket.requests > self._max_requests
+            or bucket.requests >= self._max_requests
         )
 
     async def _build(self, key: tuple[str, str], mode: str) -> _Bucket:

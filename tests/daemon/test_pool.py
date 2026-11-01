@@ -204,12 +204,12 @@ async def test_rebuild_on_idle_ttl_and_max_age_and_max_requests(monkeypatch):
     assert len(reg["built"]) == 2  # 纯年龄触发
     assert reg["sessions"][0].closed is True
 
-    # 请求数 > max_requests → 重建
+    # 请求数达到 max_requests 即重建:每会话恰服务 max_requests 次
     pool, reg = make_pool(monkeypatch, max_requests=2)
-    for _ in range(3):  # 恰好等于阈值不触发:第 3 次仍复用
+    for _ in range(2):  # 第 2 次仍复用:配额仅用到 1 < 2
         await pool.fetch("http://a.example.com/1", "stealth", 1000)
     assert len(reg["built"]) == 1
-    await pool.fetch("http://a.example.com/2", "stealth", 1000)  # 3 > 2 → 重建
+    await pool.fetch("http://a.example.com/2", "stealth", 1000)  # 第 3 次:2 >= 2 → 重建
     assert len(reg["built"]) == 2
     assert reg["sessions"][0].closed is True
     assert len(reg["sessions"][1].fetch_calls) == 1  # 新会话服务本次请求
@@ -229,6 +229,38 @@ async def test_rebuild_on_fetch_error(monkeypatch):
     await pool.fetch("http://a.example.com/3", "stealth", 1000)  # 下次重建新会话
     assert len(reg["built"]) == 2
     assert reg["sessions"][1].closed is False
+
+
+@pytest.mark.asyncio
+async def test_rebuild_on_cancelled_fetch(monkeypatch):
+    """取消与异常同路径:销毁桶会话后 re-raise, 下次重建新会话。"""
+    pool, reg = make_pool(monkeypatch)
+    await pool.fetch("http://a.example.com/1", "stealth", 1000)
+    reg["sessions"][0].error = asyncio.CancelledError()
+    task = asyncio.create_task(pool.fetch("http://a.example.com/2", "stealth", 1000))
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert reg["sessions"][0].closed is True  # 被取消的会话身份不可复用
+    assert pool.stats()["sessions"] == 0
+    assert pool.stats()["hits"] == 0  # 取消亦不计 hits
+    await pool.fetch("http://a.example.com/3", "stealth", 1000)  # 下次重建
+    assert len(reg["built"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_hits_counted_only_on_successful_fetch(monkeypatch):
+    """失败不计 hits:命中统计只反映真正交付的会话复用。"""
+    pool, reg = make_pool(monkeypatch)
+    await pool.fetch("http://a.example.com/1", "stealth", 1000)  # miss:建桶
+    assert pool.stats()["hits"] == 0
+    reg["sessions"][0].error = RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        await pool.fetch("http://a.example.com/2", "stealth", 1000)  # 命中但失败
+    assert pool.stats()["hits"] == 0  # 失败不计
+    await pool.fetch("http://a.example.com/3", "stealth", 1000)  # 桶已销毁:重建(miss)
+    assert pool.stats()["hits"] == 0
+    await pool.fetch("http://a.example.com/4", "stealth", 1000)  # 复用且成功
+    assert pool.stats()["hits"] == 1
 
 
 @pytest.mark.asyncio
