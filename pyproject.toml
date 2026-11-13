@@ -33,7 +33,13 @@ dependencies = [
     # Kept as a direct dependency on purpose: camoufox launches its Firefox
     # through playwright (upstream declares it unpinned), so the driver
     # version is controlled here. Its chromium download is never used.
-    "playwright>=1.55.0",
+    # Capped below 1.65 on purpose: playwright 1.65.0 added a
+    # `downloadOptions.legacyInterceptor` field to the Firefox
+    # Browser.setDownloadOptions call, and the juggler protocol shipped
+    # inside camoufox 0.4.x rejects unknown properties, so every stealth
+    # launch dies with "Protocol error (Browser.setDownloadOptions)".
+    # Uncap once camoufox ships a Firefox whose juggler knows the field.
+    "playwright>=1.55.0,<1.65",
     "pyyaml>=6.0",
     "readability-lxml>=0.8.1",
     # Pinned to 0.3.6 on purpose. From 0.3.7 upstream ships engines that
