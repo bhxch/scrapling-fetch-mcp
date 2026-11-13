@@ -11,6 +11,15 @@ on:
   schedule:
     - cron: "17 21 * * *" # daily; off-the-hour minute avoids runner peak
   workflow_dispatch:
+  # Manual trigger channel. `gh workflow run` needs a token with
+  # actions:write; where the only available PAT is read-only it answers 403
+  # ("Resource not accessible by personal access token"). Pushing this
+  # branch — `git push origin main:canary-trigger` — runs the canary on
+  # demand without touching the cron schedule. The branch is disposable:
+  # delete it once the run is through.
+  push:
+    branches:
+      - canary-trigger
 
 permissions:
   contents: read
