@@ -29,6 +29,13 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          # Python is pinned on purpose. The runner image's /usr/bin/python3
+          # drifts with image updates (3.12.3 on 2026-11-14, 3.14.4 on
+          # 2026-11-15), so an unpinned canary mixes interpreter and ABI
+          # changes into the dependency-drift signal: onnxruntime 1.20.1 has
+          # no cp314 wheel, so the resolve silently jumps to a newer release.
+          # 3.14 is the newest release within requires-python (>=3.10).
+          python-version: "3.14"
 
       - name: Resolve newest allowed dependency versions
         run: uv lock --upgrade
@@ -42,6 +49,7 @@ jobs:
           uv pip list 2>/dev/null \
             | grep -Ei '^(camoufox|playwright|scrapling|curl-cffi|mcp) ' \
             | tee .temp/canary-versions.txt || true
+          uv run --no-sync python -V 2>&1 | tee -a .temp/canary-versions.txt || true
 
       - name: Install Firefox runtime system libraries
         run: uv run --no-sync python -m playwright install-deps firefox
