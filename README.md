@@ -15,7 +15,7 @@ This tool is optimized for low-volume retrieval of documentation and reference m
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.14 (3.14.x only — CI runs exactly 3.14)
 - [uv](https://github.com/astral-sh/uv) package manager
 
 ### Install

@@ -7,9 +7,14 @@ authors = [
     { name = "restlessronin", email = "88921269+restlessronin@users.noreply.github.com" },
 ]
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+# Pinned to the 3.14 series on purpose: CI runs exactly 3.14
+# (setup-uv's python-version), and the dependency set below is only
+# resolved and verified for the interpreter we actually test. Widen it
+# together with a CI matrix — not ahead of it.
+requires-python = ">=3.14,<3.15"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -27,7 +32,10 @@ dependencies = [
     "markdownify>=1.2.0",
     "markitdown>=0.1.0",  # NEW - HTML to Markdown converter (0.1.0+ for stable API)
     "mcp>=2.3.0, <3.0.0",
-    "msgspec>=0.19.0",
+    # Floored at 0.20 on purpose: 0.19.x ships no cp314 wheel, so on the
+    # pinned Python 3.14 an install falls back to a source build and dies
+    # on a missing Python.h. 0.20 is the first release with cp314 wheels.
+    "msgspec>=0.20.0",
     "packaging>=24.1, <25.0",
     "platformdirs>=4.0",
     # Kept as a direct dependency on purpose: camoufox launches its Firefox
