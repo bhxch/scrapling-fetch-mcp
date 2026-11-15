@@ -334,9 +334,12 @@ async def test_shutdown_error_frame_keeps_sock_and_lock(daemon_env, monkeypatch,
             rc = await asyncio.to_thread(mcp_mod._daemon_main, ["shutdown", "--all"])
             assert rc == 1  # 拒绝计入失败
             await asyncio.wait_for(hnd.task, 2.0)  # 其余 daemon 照常处理
+            # 身份文件断言必须在假 daemon 存活期间做：Python 3.13+ 的
+            # asyncio.start_unix_server 默认 cleanup_socket=True，server 关闭
+            # 时会删掉 sock 文件——块外再查，缺的是 asyncio 删的而非 CLI 删的。
+            assert refuser.exists() and refuser.with_suffix(".lock").exists()  # 身份文件未删
     out = capsys.readouterr()
     assert "unauthorized" in out.err  # 明确报错
-    assert refuser.exists() and refuser.with_suffix(".lock").exists()  # 身份文件未删
     assert killed == []  # 存活 daemon 不升级强杀
     assert not hnd.sock.exists()
 
